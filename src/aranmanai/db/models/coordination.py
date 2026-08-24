@@ -1,4 +1,4 @@
-"""Operational coordination models: notes, witness production, daily review, alerts, pilot.
+"""Operational coordination models: notes, witness production, daily review, alerts, pilot, CMC loop.
 
 These power Kishore Kommi's accountability loop:
 - SP-IO-PP chat per case (coordination_note)
@@ -6,6 +6,10 @@ These power Kishore Kommi's accountability loop:
 - SP daily review entries (daily_review)
 - Proactive alerts (alert)
 - Pilot measurement (pilot_case)
+- CMC daily action tracker (action_item)
+- CMC daily meeting record (cmc_meeting)
+- SP per-case sign-off (sp_daily_review)
+- Escalation chain (escalation)
 
 DPDP §8(3): every entry has actor_id, timestamp; sensitive fields
 encrypted; audit hash chained.
@@ -17,7 +21,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, String, Text
+from sqlalchemy import JSON, Date, DateTime, Enum, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from aranmanai.db.session import Base
@@ -293,4 +297,204 @@ class PilotCase(Base):
 
     def __repr__(self) -> str:
         return f"<PilotCase {self.case_id[:8]} outcome={self.outcome}>"
+
+
+# ──────────────────────────────────────────────────────────────
+# CMC daily meeting — the core loop that made Kishore's system work
+# ──────────────────────────────────────────────────────────────
+
+
+class CMCMeeting(Base):
+    """One row per daily CMC morning meeting.
+
+    Kishore Kommi's accountability loop:
+    1. SP holds 30-min morning CMC at 10am (court constable + PP + IO present)
+    2. Today's actions assigned per case — each is an ActionItem
+    3. IO/PP reports back next morning — each answer is an ActionAnswer
+    4. Overdue answers trigger Alert to SP
+
+    DPDP: meeting minutes are internal; not shared with external parties.
+    """
+    __tablename__ = "cmc_meeting"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    district: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    meeting_date: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    # Who held this meeting (typically SP)
+    held_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False)
+    # Attendees: list of user IDs
+    attendees: Mapped[list] = mapped_column(JSON, default=list)
+    # Free-form minutes
+    minutes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Key decisions made
+    decisions: Mapped[list] = mapped_column(JSON, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<CMCMeeting {self.meeting_date.date()} district={self.district}>"
+
+
+# ──────────────────────────────────────────────────────────────
+# Action item — one action per case per meeting
+# ──────────────────────────────────────────────────────────────
+
+
+class ActionPriority(str, enum.Enum):
+    URGENT = "urgent"      # must be done today
+    HIGH = "high"          # must be done by tomorrow
+    MEDIUM = "medium"      # this week
+    LOW = "low"             # this month
+
+
+class ActionStatus(str, enum.Enum):
+    PENDING = "pending"     # assigned, not yet answered
+    ANSWERED = "answered"   # IO/PP reported back
+    OVERDUE = "overdue"    # past due_date, no answer
+    CANCELLED = "cancelled"
+
+
+class ActionItem(Base):
+    """One action assigned per case per CMC meeting.
+
+    This is the CORE of Kishore's accountability loop:
+    - SP assigns: "IO, call witness X today"
+    - Due tomorrow morning: IO must answer "done / not done / blocked"
+    - If no answer → Alert to SP → escalation
+    """
+    __tablename__ = "action_item"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    meeting_id: Mapped[str] = mapped_column(String(36), ForeignKey("cmc_meeting.id"), index=True, nullable=False)
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("case.id"), index=True, nullable=False)
+
+    # What the IO/PP needs to do
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    action_type: Mapped[str] = mapped_column(String(32), nullable=False)  # call_witness | confirm_production | fsl_reminder | court_followup | etc.
+
+    # Who is responsible
+    assigned_to: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False)
+    assigned_role: Mapped[str] = mapped_column(String(16), nullable=False)  # io | pp | court_constable | sp
+
+    # When it must be done (typically next morning for IO answerability)
+    due_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    priority: Mapped[ActionPriority] = mapped_column(
+        Enum(ActionPriority), default=ActionPriority.HIGH, nullable=False
+    )
+
+    # Status
+    status: Mapped[ActionStatus] = mapped_column(
+        Enum(ActionStatus), default=ActionStatus.PENDING, nullable=False
+    )
+
+    # IO/PP's answer (filled next morning)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)  # done | not_done | blocked
+    answer_detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # free-form explanation
+    answered_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("user.id"), nullable=True)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # SP review
+    sp_reviewed: Mapped[bool] = mapped_column(default=False, nullable=False)
+    sp_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_action_case_due", "case_id", "due_date"),
+        Index("ix_action_assignee_status", "assigned_to", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ActionItem {self.action_type} case={self.case_id[:8]} status={self.status.value}>"
+
+
+# ──────────────────────────────────────────────────────────────
+# SP daily review — SP's per-case sign-off
+# ──────────────────────────────────────────────────────────────
+
+
+class SpDailyReview(Base):
+    """SP's per-case per-day sign-off. Kishore's loop:
+    - SP reviews every case every single morning
+    - Marks: REVIEWED (acknowledged, no action), ESCALATED (needs intervention), or CLEARED (auto, no review needed)
+    - Without this, the SP is just looking at a dashboard, not running the loop
+    """
+    __tablename__ = "sp_daily_review"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("case.id"), index=True, nullable=False)
+    review_date: Mapped[datetime] = mapped_column(Date, index=True, nullable=False)
+    sp_id: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False)
+
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)  # pending | reviewed | escalated | cleared
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    overdue_action_count: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_sdr_case_date", "case_id", "review_date", unique=True),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SpDailyReview {self.review_date} case={self.case_id[:8]} {self.status}>"
+
+
+# ──────────────────────────────────────────────────────────────
+# Escalation — IO/PP missed an action → SP gets pinged
+# ──────────────────────────────────────────────────────────────
+
+
+class EscalationStatus(str, enum.Enum):
+    OPEN = "open"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+
+
+class Escalation(Base):
+    """One row per escalation event. Triggered automatically when
+    an ActionItem goes overdue. SP must acknowledge or resolve.
+    """
+    __tablename__ = "escalation"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("case.id"), index=True, nullable=False)
+    action_id: Mapped[str] = mapped_column(String(36), ForeignKey("action_item.id"), nullable=True, index=True)
+
+    # Who raised the escalation (system or SP)
+    raised_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("user.id"), nullable=True)
+    # Who needs to respond (IO/PP)
+    to_user: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False, index=True)
+    # SP cc'd
+    sp_id: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False)
+
+    severity: Mapped[str] = mapped_column(String(16), default="warning", nullable=False)  # info | warning | critical
+    reason: Mapped[str] = mapped_column(String(256), nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    status: Mapped[EscalationStatus] = mapped_column(
+        Enum(EscalationStatus), default=EscalationStatus.OPEN, nullable=False, index=True,
+    )
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<Escalation {self.severity} case={self.case_id[:8]} status={self.status.value}>"
 
