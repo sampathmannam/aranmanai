@@ -46,6 +46,8 @@ def create_case(
         pp_id=body.pp_id,
         facts_text=body.facts_text,
         next_hearing=body.next_hearing,
+        acquittal_risk=body.acquittal_risk,
+        p_conviction=body.p_conviction,
     )
     db.add(case)
     db.commit()

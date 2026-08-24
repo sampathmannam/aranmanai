@@ -35,10 +35,21 @@ def test_daily_calendar_returns_today_hearings(client, auth_headers):
 
 def test_cases_at_risk_includes_high_risk(client, auth_headers):
     case_id, _ = _create_case_with_hearing_and_hostile_witness(client, auth_headers)
+    # Verify the witness was actually categorized Hostile
+    r = client.get(f"/cases/{case_id}/witnesses", headers=auth_headers)
+    assert r.status_code == 200
+    witnesses = r.json()
+    hostile = [w for w in witnesses if w["category"] == "Hostile"]
+    assert len(hostile) >= 1, f"expected >=1 hostile witness, got {witnesses}"
+    # Verify the case has acquittal_risk set
+    r = client.get(f"/cases/{case_id}", headers=auth_headers)
+    assert r.json()["acquittal_risk"] == 0.7
     r = client.get("/cms/cases-at-risk?limit=5&min_hostile=1", headers=auth_headers)
     assert r.status_code == 200
     cases = r.json()
-    assert any(c["id"] == case_id for c in cases)
+    # The case may be at top of list; check by case_id
+    case_ids = [c["id"] for c in cases]
+    assert case_id in case_ids, f"case {case_id} not in {case_ids}"
 
 
 def test_bottlenecks_returns_stale_cases(client, auth_headers):

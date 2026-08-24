@@ -68,6 +68,8 @@ class CaseCreate(BaseModel):
     pp_id: int | None = None
     facts_text: str | None = None
     next_hearing: int | None = Field(default=None, description="Unix epoch seconds (UTC)")
+    acquittal_risk: float | None = Field(default=None, ge=0, le=1, description="Optional initial acquittal risk 0-1")
+    p_conviction: float | None = Field(default=None, ge=0, le=1, description="Optional initial P(conviction) 0-1")
 
     @field_validator("sections")
     @classmethod

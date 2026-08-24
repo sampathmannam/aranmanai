@@ -30,12 +30,28 @@ os.environ.setdefault("ESAKSHYA_MODE", "mock")
 os.environ.setdefault("ICJS_MODE", "mock")
 
 
+# Lock for per-test DB reset (serialise so TestClient in test A and
+# session_scope in test B don't collide on the SQLite file).
+_RESET_LOCK = threading.Lock()
+
+
 @pytest.fixture()
 def temp_dir() -> Generator[Path, None, None]:
     """Backwards-compat fixture: returns the session test tmp dir.
-    Tests that need isolation should use the `client` fixture which
-    drops + recreates the schema per-test."""
+    Also resets the DB to a clean state for tests that use session_scope
+    directly (not the client fixture)."""
+    _reset_db_to_clean()
     yield _TEST_TMP
+
+
+def _reset_db_to_clean() -> None:
+    """Drop + recreate all tables under a lock."""
+    with _RESET_LOCK:
+        from src.aranmanai.db import Base, engine
+        from src.aranmanai import models  # noqa: F401
+        engine.dispose()
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
 
 
 @pytest.fixture()
