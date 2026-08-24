@@ -76,7 +76,7 @@ def main_page() -> None:
         st.rerun()
     page = st.sidebar.radio(
         "Navigate",
-        ["Today", "Cases", "Witnesses", "SP Dashboard", "AI Assist"],
+        ["Today", "Cases", "Witnesses", "SP Dashboard", "AI Assist", "Voice", "Tamil"],
         index=0,
     )
     if page == "Today":
@@ -89,6 +89,12 @@ def main_page() -> None:
         render_sp_dashboard()
     elif page == "AI Assist":
         render_ai_assist()
+    elif page == "Voice":
+        from aranmanai.frontend.voice_tab import render_voice_tab
+        render_voice_tab()
+    elif page == "Tamil":
+        from aranmanai.frontend.tamil_tab import render_tamil_tab
+        render_tamil_tab()
 
 
 def render_today() -> None:
