@@ -19,12 +19,14 @@ env/
 Thumbs.db
 
 # Data (case data, audit logs - never commit)
-data/*.db
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 data/chroma/
 data/backups/
+data/mock_*.json
 
 # Models (downloaded, not committed)
 models/*.pkl

@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.aranmanai import __version__
-from src.aranmanai.api import auth, cases, cms, evidence, hearings, users, witnesses
+from src.aranmanai.api import ai, auth, cases, cms, evidence, hearings, users, witnesses
 from src.aranmanai.config import settings
 from src.aranmanai.db import engine, init_db, verify_db
 from src.aranmanai.logging_config import configure_logging, get_logger
@@ -106,6 +106,9 @@ app.include_router(evidence.router)
 
 # CMS (the operational core)
 app.include_router(cms.router)
+
+# AI assist (LLM-backed FIR/chargesheet drafting, etc.)
+app.include_router(ai.router)
 
 
 # --- Health ---
