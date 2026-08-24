@@ -29,12 +29,12 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from aranmanai.config import get_settings
-from aranmanai.db import init_db, SessionLocal
+from aranmanai.db import Base, engine, init_db, SessionLocal  # noqa: F401 — engine is callable
 from aranmanai.db.models.case import Case, CaseStage, CaseStatus
-from aranmanai.db.models.evidence import Evidence, EvidenceType, FslStatus, ChainStatus
-from aranmanai.db.models.hearing import Hearing, HearingStage
+from aranmanai.db.models.evidence import Evidence, EvidenceType, FslStatus, EvidenceChainStatus
+from aranmanai.db.models.hearing import Hearing
 from aranmanai.db.models.user import User, UserRole
-from aranmanai.db.models.witness import Witness, WitnessCategory, WitnessType
+from aranmanai.db.models.witness import Witness, WitnessCategory, WitnessPrepStatus, WitnessType
 from aranmanai.observability import get_logger, setup_logging
 from aranmanai.security import encrypt_field, hash_password
 
@@ -208,13 +208,13 @@ def _ensure_pp(db, district: str) -> User:
 
 def _witness_for(db, case_id: str, idx: int, name: str, type_: WitnessType,
                 category: WitnessCategory, hostile_reason: str | None,
-                prep_status: str) -> Witness:
+                prep_status: WitnessPrepStatus) -> Witness:
     w = Witness(
         case_id=case_id,
-        name=name,
+        name_encrypted=encrypt_field(name),
+        contact_encrypted=encrypt_field(f"98{random.randint(400000000, 499999999)}"),
         type=type_,
         category=category,
-        contact=f"98{random.randint(400000000, 499999999)}",
         language="ta",
         prep_status=prep_status,
         hostile_reason=hostile_reason if category == WitnessCategory.HOSTILE else None,
@@ -225,31 +225,39 @@ def _witness_for(db, case_id: str, idx: int, name: str, type_: WitnessType,
     return w
 
 
-def _evidence_for(db, case_id: str, type_: EvidenceType, chain: ChainStatus,
-                 fsl: FslStatus, has_cctv: bool) -> Evidence:
+def _evidence_for(db, case_id: str, type_: EvidenceType, chain: EvidenceChainStatus,
+                 fsl: FslStatus) -> Evidence:
+    desc_map = {
+        EvidenceType.DOCUMENT: "Charge sheet / FIR copy",
+        EvidenceType.WITNESS_TESTIMONY: "164 BNSS statement",
+        EvidenceType.FSL: "FSL report",
+        EvidenceType.ELECTRONIC: "CCTV / mobile records",
+        EvidenceType.PHYSICAL: "Recovered material evidence",
+        EvidenceType.MEDICAL: "MLC / post-mortem report",
+    }
     e = Evidence(
         case_id=case_id,
         type=type_,
+        description=desc_map.get(type_, "Evidence item"),
         chain_status=chain,
         fsl_status=fsl,
-        cctv_available=has_cctv,
     )
     db.add(e)
     db.flush()
     return e
 
 
-def _hearing_for(db, case_id: str, stage: HearingStage, days_from_now: int,
+def _hearing_for(db, case_id: str, stage: str, days_from_now: int,
                 pp_present: bool, defense_present: bool, accused_present: bool,
                 witnesses: list) -> Hearing:
     h = Hearing(
         case_id=case_id,
-        hearing_date=datetime.now(timezone.utc) + timedelta(days=days_from_now),
+        date=datetime.now(timezone.utc) + timedelta(days=days_from_now),
         stage=stage,
         pp_present=pp_present,
         defense_present=defense_present,
         accused_present=accused_present,
-        witness_present_ids=[w.id for w in witnesses[:2]],
+        witness_ids_present=[w.id for w in witnesses[:2]],
     )
     db.add(h)
     db.flush()
@@ -264,9 +272,9 @@ def seed_case(db, idx: int, offence: str, district: str) -> Case:
     fir_no = f"FIR/{district[:3].upper()}/{random.randint(2024, 2026):04d}/{random.randint(100, 999):03d}"
 
     case_stage = random.choice([
-        CaseStage.CHARGE_SHEET, CaseStage.TRIAL, CaseStage.ARGUMENT,
+        CaseStage.CHARGE_SHEET, CaseStage.EVIDENCE, CaseStage.ARGUMENT,
     ])
-    case_status = random.choice([CaseStatus.OPEN, CaseStatus.HEARING, CaseStatus.HEARING])
+    case_status = random.choice([CaseStatus.OPEN, CaseStatus.CHARGE_SHEETED, CaseStatus.TRIAL])
 
     date_str = (datetime.now() - timedelta(days=random.randint(30, 365))).strftime("%Y-%m-%d")
     date2_str = (datetime.now() - timedelta(days=random.randint(20, 360))).strftime("%Y-%m-%d")
@@ -311,29 +319,29 @@ def seed_case(db, idx: int, offence: str, district: str) -> Case:
                 "bought off by accused",
                 "fear of retaliation",
             ])
-            prep_status = random.choice(["untouched", "prepped", "prepped"])
+            prep_status = random.choice([WitnessPrepStatus.UNTOUCHED, WitnessPrepStatus.PREPPED, WitnessPrepStatus.PREPPED])
         else:
             category = random.choice([WitnessCategory.SUPPORTIVE, WitnessCategory.NEUTRAL])
             type_ = random.choice([WitnessType.EYEWITNESS, WitnessType.VICTIM, WitnessType.EXPERT])
             hostile_reason = None
-            prep_status = random.choice(["untouched", "prepped", "ready", "ready", "ready"])
+            prep_status = random.choice([WitnessPrepStatus.UNTOUCHED, WitnessPrepStatus.PREPPED, WitnessPrepStatus.READY, WitnessPrepStatus.READY, WitnessPrepStatus.READY])
         _witness_for(db, case_id, i, f"{name} {i+1}", type_, category, hostile_reason, prep_status)
 
     # Evidence (2-5 items)
     n_evidence = random.randint(2, 5)
     for _ in range(n_evidence):
         type_ = random.choice(list(EvidenceType))
-        chain = random.choice([ChainStatus.SEALED, ChainStatus.SEALED, ChainStatus.SEALED, ChainStatus.BROKEN])
+        chain = random.choice([EvidenceChainStatus.SEALED, EvidenceChainStatus.SEALED, EvidenceChainStatus.SEALED, EvidenceChainStatus.BROKEN])
         fsl = random.choice(list(FslStatus))
         has_cctv = random.random() < 0.3
-        _evidence_for(db, case_id, type_, chain, fsl, has_cctv)
+        _evidence_for(db, case_id, type_, chain, fsl)
 
     # Hearings: 1-3 past hearings + 1 upcoming
     n_past_hearings = random.randint(1, 3)
     for i in range(n_past_hearings):
         days_ago = random.randint(15, 180)
         _hearing_for(
-            db, case_id, HearingStage.WITNESS_EXAMINATION, -days_ago,
+            db, case_id, "witness_examination", -days_ago,
             pp_present=True, defense_present=True, accused_present=random.random() < 0.85,
             witnesses=[],
         )
@@ -343,7 +351,7 @@ def seed_case(db, idx: int, offence: str, district: str) -> Case:
         days_ahead = 1  # always at least 1 day out
     case.next_hearing = datetime.now(timezone.utc) + timedelta(days=days_ahead)
     _hearing_for(
-        db, case_id, HearingStage.WITNESS_EXAMINATION, days_ahead,
+        db, case_id, "witness_examination", days_ahead,
         pp_present=True, defense_present=True, accused_present=random.random() < 0.85,
         witnesses=[],
     )
@@ -368,12 +376,10 @@ def main() -> None:
     try:
         if args.clear:
             log.info("seed.clear")
-            # Order matters (foreign keys)
-            db.query(Hearing).delete()
-            db.query(Evidence).delete()
-            db.query(Witness).delete()
-            db.query(Case).delete()
+            Base.metadata.drop_all(bind=engine())
+            Base.metadata.create_all(bind=engine())
             db.commit()
+            log.info("seed.schema_recreated")
 
         offences = args.offences.split(",")
         # Distribution: 5 POCSO, 4 murder, 4 NDPS, 4 dowry, 3 SC/ST
@@ -389,7 +395,7 @@ def main() -> None:
                 idx += 1
         db.commit()
         log.info("seed.done", total=idx)
-        print(f"\n✓ Seeded {idx} cases across {len(offences)} offence types.")
+        print(f"\nSeeded {idx} cases across {len(offences)} offence types.")
         print(f"  Default admin: admin / Aranmanai!Dev!2026")
         print(f"  District: {district}")
         print(f"  Login: POST /api/v1/auth/login")

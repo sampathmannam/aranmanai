@@ -54,10 +54,15 @@ class Case(Base):
     court: Mapped[str | None] = mapped_column(String(128), nullable=True)
     judge: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    # BNS / BNSS / BSA sections, stored as JSON list
+    # BNS / BNSS / BSA / PoA sections, stored as JSON list
     bns_sections: Mapped[list[str]] = mapped_column(JSON, default=list)
     bnss_sections: Mapped[list[str]] = mapped_column(JSON, default=list)
     bsa_sections: Mapped[list[str]] = mapped_column(JSON, default=list)
+    poa_sections: Mapped[list[str]] = mapped_column(JSON, default=list)  # SC/ST PoA Act sections
+    is_poa_act_case: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    # Facts (plaintext summary — not encrypted in pilot seed)
+    facts: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Encrypted text fields (witness names, contact, etc. — see security/crypto.py)
     facts_text: Mapped[str | None] = mapped_column(Text, nullable=True)
