@@ -65,7 +65,18 @@ def render_voice_tab() -> None:
         value=True,
     )
 
-    if audio_file and st.button("Transcribe", type="primary"):
+    # Persist transcribed text in session state across re-renders
+    if "voice_transcript" not in st.session_state:
+        st.session_state.voice_transcript = ""
+    if "voice_transcript_result" not in st.session_state:
+        st.session_state.voice_transcript_result = None
+
+    col_btn = st.columns([1, 1, 3])
+    transcribe_clicked = col_btn[0].button("Transcribe", type="primary")
+    # "Transcribe and generate complaint" — both in one shot
+    generate_clicked = col_btn[1].button("Transcribe + Generate complaint")
+
+    if audio_file and (transcribe_clicked or generate_clicked):
         try:
             # Save to temp file (faster-whisper expects path)
             suffix = Path(audio_file.name).suffix or ".wav"
@@ -91,8 +102,11 @@ def render_voice_tab() -> None:
                 pass
             if r.status_code == 200:
                 result = r.json()
+                transcript_text = result.get("text", "")
+                st.session_state.voice_transcript = transcript_text
+                st.session_state.voice_transcript_result = result
                 st.success("Transcription complete")
-                st.text_area("Transcribed text", result.get("text", ""), height=200)
+                st.text_area("Transcribed text", transcript_text, height=200, key="transcript_area")
                 cols = st.columns(4)
                 cols[0].metric("Language", result.get("language", "?"))
                 cols[1].metric("Confidence", f"{result.get('language_probability', 0):.0%}")
@@ -101,6 +115,34 @@ def render_voice_tab() -> None:
                 if "num_segments" in result:
                     st.write(f"Segments: {result['num_segments']}")
                 st.code(f"audio_sha256: {result.get('audio_sha256', '?')[:24]}...", language="text")
+
+                # Chain: send directly to complaint-intake
+                if generate_clicked and transcript_text:
+                    with st.spinner("Generating structured complaint from transcript..."):
+                        try:
+                            intake_r = requests.post(
+                                f"{API_BASE}/api/v1/ai/complaint-intake",
+                                json={
+                                    "raw_complaint": transcript_text,
+                                    "complainant_name": None,
+                                    "complainant_contact": None,
+                                    "language": result.get("language", "en") or "en",
+                                },
+                                headers=_auth_headers(),
+                                timeout=60,
+                            )
+                            if intake_r.status_code == 200:
+                                intake = intake_r.json()
+                                st.success("Complaint generated from audio!")
+                                st.text_area("Structured complaint", intake.get("structured", ""), height=300)
+                                st.write(f"**Registerable:** {intake.get('registerable', '?')}")
+                                st.write(f"**Likely BNS sections:** {intake.get('likely_sections_bns', [])}")
+                                st.write(f"**Offence type:** {intake.get('offence_type', '?')}")
+                            else:
+                                st.warning(f"Complaint intake failed (HTTP {intake_r.status_code}). "
+                                           "AI service may be unavailable — start the API server first.")
+                        except Exception as ie:
+                            st.warning(f"Complaint intake error: {ie}. Start the API server with: python -m aranmanai.api.main")
             else:
                 st.error(f"Transcription failed: HTTP {r.status_code}: {r.text[:300]}")
         except Exception as e:

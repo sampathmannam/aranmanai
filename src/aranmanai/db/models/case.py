@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from aranmanai.db.models.witness import Witness
     from aranmanai.db.models.hearing import Hearing
     from aranmanai.db.models.evidence import Evidence
-    from aranmanai.db.models.coordination import CoordinationNote
+    from aranmanai.db.models.coordination import ActionItem, CMCMeeting, CoordinationNote
 
 
 class CaseStatus(str, enum.Enum):

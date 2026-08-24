@@ -14,8 +14,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.aranmanai.config import settings
-from src.aranmanai.logging_config import get_logger
+from aranmanai.config import get_settings
+from aranmanai.observability import get_logger
+
+settings = get_settings()
 
 log = get_logger(__name__)
 
@@ -37,13 +39,13 @@ def _ensure_chromadb() -> bool:
         log.warning("chromadb not installed; RAG unavailable")
         return False
     try:
-        settings.chroma_dir.mkdir(parents=True, exist_ok=True)
-        _chroma_client = _chromadb.PersistentClient(path=str(settings.chroma_dir))
+        settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
+        _chroma_client = _chromadb.PersistentClient(path=str(settings.chroma_persist_dir))
         _chroma_collection = _chroma_client.get_or_create_collection(
             name="aranmanai_corpus",
             metadata={"hnsw:space": "cosine"},
         )
-        log.info("rag.ready chroma_dir=%s count=%s", settings.chroma_dir, _chroma_collection.count())
+        log.info("rag.ready chroma_dir=%s count=%s", settings.chroma_persist_dir, _chroma_collection.count())
         return True
     except Exception as e:
         log.error("rag.init failed: %s", e)
