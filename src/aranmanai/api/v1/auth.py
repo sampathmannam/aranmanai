@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
-from aranmanai.api.deps import CurrentUser, DbSession
+from aranmanai.api.deps import AdminUser, CurrentUser, DbSession
 from aranmanai.db.models.user import User, UserRole
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog, generate_token, hash_password, verify_password
@@ -76,10 +76,13 @@ def login(req: LoginRequest, db: DbSession) -> TokenResponse:
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(req: RegisterRequest, db: DbSession) -> TokenResponse:
+def register(req: RegisterRequest, user: AdminUser, db: DbSession) -> TokenResponse:
     """Register a new user. Only admins can register; for v1, the first
     user (bootstrapped via init script) is the SP/Admin who then creates
     others.
+
+    CRITICAL: This endpoint previously had no auth check, allowing anyone
+    to create admin accounts. The AdminUser dependency now enforces it.
     """
     existing = db.query(User).filter(User.username == req.username).first()
     if existing:

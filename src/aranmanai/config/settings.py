@@ -35,8 +35,18 @@ class Settings(BaseSettings):
 
     # ── Database ──
     db_path: Path = Path("data/aranmanai.db")
-    db_key: str = "aranmanai-dev-key-change-in-production-min-32-chars"
+    db_key: str = ""  # MUST be set via ARANMANAI_DB_KEY env var; refused at startup if empty
     db_echo: bool = False
+
+    @field_validator("db_key")
+    @classmethod
+    def _db_key_required(cls, v):
+        if not v or len(v) < 32:
+            raise ValueError(
+                "ARANMANAI_DB_KEY must be set to a 32+ char secret via env var or .env file. "
+                "Run `python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"` to generate one."
+            )
+        return v
 
     # ── LLM ──
     llm_backend: Literal["mock", "llama_cpp", "ollama"] = "mock"
@@ -60,10 +70,20 @@ class Settings(BaseSettings):
     audit_log_path: Path = Path("data/audit.log")
 
     # ── Security ──
-    jwt_secret: str = "aranmanai-jwt-dev-secret-change-in-production-min-32-chars"
+    jwt_secret: str = ""  # MUST be set via ARANMANAI_JWT_SECRET env var
     jwt_algorithm: str = "HS256"
     jwt_expiry_minutes: int = 60
     bcrypt_rounds: int = 12
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def _jwt_secret_required(cls, v):
+        if not v or len(v) < 32:
+            raise ValueError(
+                "ARANMANAI_JWT_SECRET must be set to a 32+ char secret via env var or .env file. "
+                "Run `python -c \"import secrets; print(secrets.token_urlsafe(48))\"` to generate one."
+            )
+        return v
 
     # ── Logging ──
     log_level: str = "INFO"
