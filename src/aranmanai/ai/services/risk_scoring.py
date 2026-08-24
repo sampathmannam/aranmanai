@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from aranmanai.ai.factory import get_llm_client
 from aranmanai.ai.llm_client import LLMClient
@@ -15,17 +16,36 @@ from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
 
+VALID_EVIDENCE_STRENGTH = ("STRONG", "MEDIUM", "WEAK")
+VALID_FSL_STATUS = ("not_sent", "in_queue", "returned", "overdue", "sent")
+
 
 class RiskScoreRequest(BaseModel):
-    case_id: str
-    case_facts: str
+    case_id: str = Field(..., min_length=1)
+    case_facts: str = Field(..., min_length=1)
     lapses: list[dict] = Field(default_factory=list)
-    evidence_strength: str = "MEDIUM"  # STRONG / MEDIUM / WEAK
-    witness_count: int = 0
-    hostile_witness_count: int = 0
-    fsl_status: str = "not_sent"  # not_sent / in_queue / returned / overdue
+    evidence_strength: Literal["STRONG", "MEDIUM", "WEAK"] = "MEDIUM"
+    witness_count: int = Field(0, ge=0)
+    hostile_witness_count: int = Field(0, ge=0)
+    fsl_status: Literal["not_sent", "in_queue", "returned", "overdue", "sent"] = "not_sent"
     bnss_173_compliant: bool = False
     language: str = "en"
+
+    @field_validator("hostile_witness_count")
+    @classmethod
+    def _hostile_le_total(cls, v, info):
+        wc = info.data.get("witness_count", 0)
+        if v > wc:
+            # Clamp to total instead of failing — better UX
+            return wc
+        return v
+
+    @field_validator("case_facts")
+    @classmethod
+    def _facts_size(cls, v):
+        if len(v) > 100_000:
+            raise ValueError("case_facts too large (max 100k chars)")
+        return v
 
 
 class RiskScoreResponse(BaseModel):

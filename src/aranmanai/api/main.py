@@ -4,8 +4,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from aranmanai.api.v1 import ai, auth, cases, cmc, cms, coordination, dpdp, hearings, pilot, risk, safety, vetting, witnesses
 from aranmanai.api import tamil, voice
@@ -78,7 +80,45 @@ def create_app() -> FastAPI:
     app.include_router(voice.router, prefix="/api/v1", tags=["voice"])
     app.include_router(tamil.router, prefix="/api/v1", tags=["tamil"])
 
+    # Global error handlers — must register before app is returned
+    app.add_exception_handler(IntegrityError, _integrity_handler)
+    app.add_exception_handler(ValueError, _value_error_handler)
+    from fastapi.exceptions import RequestValidationError
+    app.add_exception_handler(RequestValidationError, _value_error_handler)
+    app.add_exception_handler(Exception, _generic_500_handler)
+
     return app
+
+
+# Global exception handlers — convert DB integrity errors to 4xx instead of 500
+async def _integrity_handler(request: Request, exc: Exception) -> JSONResponse:
+    log.warning("api.integrity_error path=%s err=%s", request.url.path, str(exc)[:200])
+    return JSONResponse(
+        status_code=400,
+        content={"detail": f"Database integrity error: {str(exc)[:200]}"},
+    )
+
+
+async def _value_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    msg = str(exc)[:300]
+    # Distinguish "not found" from other validation errors
+    if "not found" in msg.lower():
+        log.info("api.not_found path=%s err=%s", request.url.path, msg)
+        return JSONResponse(status_code=404, content={"detail": msg})
+    log.info("api.value_error path=%s err=%s", request.url.path, msg)
+    return JSONResponse(status_code=400, content={"detail": msg})
+
+
+async def _generic_500_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Last-resort handler. Logs the full traceback server-side, returns a
+    generic 500 to the client. Prevents stack-trace leakage."""
+    import traceback
+    log.error("api.unhandled_500 path=%s err=%s\n%s",
+              request.url.path, str(exc)[:200], traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "type": type(exc).__name__},
+    )
 
 
 # Module-level app for uvicorn

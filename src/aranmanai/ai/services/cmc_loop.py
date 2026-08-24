@@ -122,6 +122,14 @@ class CmcLoopService:
         priority: ActionPriority = ActionPriority.HIGH,
     ) -> ActionItem:
         """SP assigns an action to an IO/PP. The heart of the loop."""
+        if not case_id or not case_id.strip():
+            raise ValueError("case_id is required")
+        if not self.db.get(Case, case_id):
+            raise ValueError(f"Case {case_id} not found")
+        if not meeting_id or not meeting_id.strip():
+            raise ValueError("meeting_id is required")
+        if not self.db.get(CMCMeeting, meeting_id):
+            raise ValueError(f"Meeting {meeting_id} not found")
         a = ActionItem(
             id=str(uuid.uuid4()),
             meeting_id=meeting_id,
@@ -268,6 +276,10 @@ class CmcLoopService:
         notes: str | None = None,
     ) -> SpDailyReview:
         """SP signs off on a case for a given day. Without this, no accountability."""
+        if not case_id or not case_id.strip():
+            raise ValueError("case_id is required")
+        if not self.db.get(Case, case_id):
+            raise ValueError(f"Case {case_id} not found")
         existing = (
             self.db.query(SpDailyReview)
             .filter(
