@@ -5,6 +5,12 @@ from aranmanai.db.models.hearing import Hearing
 from aranmanai.db.models.evidence import Evidence, EvidenceType, EvidenceChainStatus, FslStatus
 from aranmanai.db.models.user import User, UserRole
 from aranmanai.db.models.audit_log import AuditLogEntry
+from aranmanai.db.models.coordination import (
+    CoordinationNote, NoteType,
+    WitnessProduction, ProductionStatus,
+    DailyCaseReview, ReviewStatus,
+    Alert, AlertType, AlertSeverity,
+)
 
 __all__ = [
     "Case", "CaseStatus", "CaseStage",
@@ -13,4 +19,8 @@ __all__ = [
     "Evidence", "EvidenceType", "EvidenceChainStatus", "FslStatus",
     "User", "UserRole",
     "AuditLogEntry",
+    "CoordinationNote", "NoteType",
+    "WitnessProduction", "ProductionStatus",
+    "DailyCaseReview", "ReviewStatus",
+    "Alert", "AlertType", "AlertSeverity",
 ]

@@ -51,8 +51,18 @@ def _make_engine() -> Engine:
     @event.listens_for(engine, "connect")
     def _set_pragma(dbapi_conn, _):
         cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA journal_mode=WAL")
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        except Exception as e:
+            log.warning("db.pragma.foreign_keys_failed", error=str(e))
+        # WAL mode requires a fully-initialized DB; skip on a fresh encrypted
+        # DB where the WAL pragma can throw "file is not a database" before
+        # any tables are created. The init_db call below will retry WAL on
+        # the first real connection.
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+        except Exception as e:
+            log.warning("db.pragma.wal_skipped", error=str(e))
         cursor.close()
 
     return engine

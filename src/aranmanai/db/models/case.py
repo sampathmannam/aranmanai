@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from aranmanai.db.models.witness import Witness
     from aranmanai.db.models.hearing import Hearing
     from aranmanai.db.models.evidence import Evidence
+    from aranmanai.db.models.coordination import CoordinationNote
 
 
 class CaseStatus(str, enum.Enum):
@@ -111,6 +112,9 @@ class Case(Base):
     )
     evidence: Mapped[list["Evidence"]] = relationship(
         "Evidence", back_populates="case", cascade="all, delete-orphan", lazy="selectin"
+    )
+    coordination_notes: Mapped[list["CoordinationNote"]] = relationship(
+        "CoordinationNote", back_populates="case", cascade="all, delete-orphan", lazy="selectin"
     )
 
     def __repr__(self) -> str:
