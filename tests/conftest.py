@@ -1,99 +1,92 @@
-"""Pytest fixtures: minimal + working.
-
-Each test that needs the client gets a fresh test client + fresh DB
-schema. The DB is bound to a single test session file, with drop_all
-+ create_all run between tests under a lock.
-"""
+"""Pytest fixtures: temp DB, mock LLM, test client."""
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
-import threading
 from pathlib import Path
-from typing import Generator
+from typing import Iterator
 
 import pytest
-from fastapi.testclient import TestClient
 
 
-# Set env vars ONCE at conftest import time, before any src.aranmanai.* import.
-_TEST_TMP = Path(tempfile.mkdtemp(prefix="aranmanai_session_"))
-(_TEST_TMP / "data").mkdir()
-os.environ.setdefault("DATA_DIR", str(_TEST_TMP / "data"))
-os.environ.setdefault("DB_PATH", str(_TEST_TMP / "data" / "aranmanai.db"))
-os.environ.setdefault("CHROMA_DIR", str(_TEST_TMP / "data" / "chroma"))
-os.environ.setdefault("MODELS_DIR", str(_TEST_TMP / "models"))
-os.environ.setdefault("BACKUPS_DIR", str(_TEST_TMP / "data" / "backups"))
-os.environ.setdefault("LLM_BACKEND", "mock")
-os.environ.setdefault("CCTNS_MODE", "mock")
-os.environ.setdefault("ESAKSHYA_MODE", "mock")
-os.environ.setdefault("ICJS_MODE", "mock")
+@pytest.fixture(scope="function")
+def tmp_env(monkeypatch) -> Iterator[Path]:
+    """Set up a clean temp dir as the data dir. Use ARANMANAI_DB_KEY
+    with a fixed dev key so the DB is deterministic across tests.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="aranmanai-test-"))
+    monkeypatch.setenv("ARANMANAI_DB_PATH", str(tmp / "test.db"))
+    monkeypatch.setenv("ARANMANAI_DB_KEY", "test-key-32-chars-aaaaaaaaaaaaaa")
+    monkeypatch.setenv("ARANMANAI_LLM_BACKEND", "mock")
+    monkeypatch.setenv("ARANMANAI_LLM_MODEL_PATH", str(tmp / "model.gguf"))
+    monkeypatch.setenv("ARANMANAI_AUDIT_LOG_PATH", str(tmp / "audit.log"))
+    monkeypatch.setenv("ARANMANAI_CHROMA_PERSIST_DIR", str(tmp / "chroma"))
+    monkeypatch.setenv("ARANMANAI_MOCK_CCTNS_DATA_DIR", str(tmp / "cctns"))
+    monkeypatch.setenv("ARANMANAI_MOCK_ESAKSHYA_DATA_DIR", str(tmp / "esakshya"))
+    monkeypatch.setenv("ARANMANAI_MOCK_ICJS_DATA_DIR", str(tmp / "icjs"))
+    monkeypatch.setenv("ARANMANAI_LOG_FILE", "")
+    monkeypatch.setenv("ARANMANAI_LOG_FORMAT", "text")
+    # Clear the cached settings to pick up env changes
+    from aranmanai.config.settings import get_settings
+    get_settings.cache_clear()
+    # Also reset the cached DB engine so each test gets a fresh engine
+    # bound to the new tmp db path.
+    from aranmanai.db.session import reset_engine
+    reset_engine()
+    try:
+        yield tmp
+    finally:
+        reset_engine()
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
-# Lock for per-test DB reset (serialise so TestClient in test A and
-# session_scope in test B don't collide on the SQLite file).
-_RESET_LOCK = threading.Lock()
+@pytest.fixture(scope="function")
+def db_session(tmp_env) -> Iterator:
+    """Initialize the DB and yield a session. Use this in any test that
+    needs the database.
+    """
+    from aranmanai.db import init_db, SessionLocal
+    init_db()
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
-@pytest.fixture()
-def temp_dir() -> Generator[Path, None, None]:
-    """Backwards-compat fixture: returns the session test tmp dir.
-    Also resets the DB to a clean state for tests that use session_scope
-    directly (not the client fixture)."""
-    _reset_db_to_clean()
-    yield _TEST_TMP
+@pytest.fixture
+def test_user(db_session) -> "User":  # type: ignore[name-defined]
+    """Create a test admin user."""
+    from aranmanai.db.models.user import User, UserRole
+    from aranmanai.security import hash_password, encrypt_field
+    user = User(
+        username="test_admin",
+        hashed_password=hash_password("test_password_123"),
+        name_encrypted=encrypt_field("Test Admin"),
+        role=UserRole.ADMIN,
+        district="test-district",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
 
 
-def _reset_db_to_clean() -> None:
-    """Drop + recreate all tables under a lock."""
-    with _RESET_LOCK:
-        from src.aranmanai.db import Base, engine
-        from src.aranmanai import models  # noqa: F401
-        engine.dispose()
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
+@pytest.fixture
+def auth_token(test_user) -> str:
+    """Generate a JWT for the test_user."""
+    from aranmanai.security import generate_token
+    return generate_token(test_user.id, {"role": test_user.role.value, "district": test_user.district})
 
 
-@pytest.fixture()
-def client() -> Generator[TestClient, None, None]:
-    """Fresh test client per test. Drops + recreates the schema.
-    Cleans up the engine connection on teardown so the next test
-    can open the file fresh."""
-    from src.aranmanai import db as dbmod
-    from src.aranmanai.db import Base
-    from src.aranmanai import models  # noqa: F401
-
-    # Wipe any prior test's data
-    dbmod.engine.dispose()
-    Base.metadata.drop_all(bind=dbmod.engine)
-    Base.metadata.create_all(bind=dbmod.engine)
-
-    from src.aranmanai.main import app
+@pytest.fixture
+def client(tmp_env, test_user, auth_token) -> Iterator:
+    """FastAPI TestClient with auth token pre-set."""
+    from fastapi.testclient import TestClient
+    from aranmanai.api.main import create_app
+    app = create_app()
     with TestClient(app) as c:
+        c.headers["Authorization"] = f"Bearer {auth_token}"
         yield c
-
-    # Teardown: dispose so the next test gets a clean file handle
-    dbmod.engine.dispose()
-
-
-@pytest.fixture()
-def admin_token(client) -> str:
-    """Bootstrap admin user via direct DB write, then login via API."""
-    from src.aranmanai import db as dbmod
-    from src.aranmanai.models import User
-    from src.aranmanai.security import hash_password
-    pwd_hash = hash_password("adminpass123")
-    with dbmod.session_scope() as db:
-        existing = db.query(User).filter(User.name == "admin").first()
-        if existing is None:
-            db.add(User(
-                name="admin", role="Admin", district="Vellore", password_hash=pwd_hash,
-            ))
-    r = client.post("/auth/login", json={"username": "admin", "password": "adminpass123"})
-    assert r.status_code == 200, r.text
-    return r.json()["access_token"]
-
-
-@pytest.fixture()
-def auth_headers(admin_token) -> dict[str, str]:
-    return {"Authorization": f"Bearer {admin_token}"}

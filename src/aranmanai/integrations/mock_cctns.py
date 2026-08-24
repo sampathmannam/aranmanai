@@ -1,116 +1,98 @@
-"""Mock CCTNS (Crime and Criminal Tracking Network & Systems) adapter.
+"""Mock CCTNS adapter.
 
-CCTNS uses the Core Application Software (CAS) v5.0 schema. Real
-access requires NIC sign-off + state SCRB coordination. v1 reads +
-writes to a local JSON file shaped like the CAS case-export format.
-
-CAS case fields we mirror (per NIC CAS v5.0 docs, public summary):
-- case_id, fir_no, fir_date, sections[], ps_code, district, state
-- accused[], victim[], witness[], investigation_officer
-- chargesheet_no, chargesheet_date, court_code
-- status (open / chargesheeted / trial / conviction / acquittal)
+Reads/writes local JSON shaped like CCTNS Core Application Software (CAS)
+v5.0. The real CCTNS is a national platform under MHA; v1 uses a local
+file. When DGP sign-off arrives, swap the implementation.
 """
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
-
-from src.aranmanai.config import settings
-from src.aranmanai.logging_config import get_logger
+from aranmanai.config import get_settings
+from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
 
 
-class CCTNSCase(BaseModel):
-    """CCTNS CAS v5.0 case export — minimal fields we mirror."""
-    case_id: str
-    fir_no: str | None = None
-    fir_date: str | None = None  # ISO 8601
-    sections: list[str] = Field(default_factory=list)
-    ps_code: str = "TN-VLR"  # Police station code, default Vellore
-    district: str = "Vellore"
-    state: str = "Tamil Nadu"
-    accused: list[dict[str, Any]] = Field(default_factory=list)
-    victim: list[dict[str, Any]] = Field(default_factory=list)
-    witness: list[dict[str, Any]] = Field(default_factory=list)
-    investigation_officer: str | None = None
-    chargesheet_no: str | None = None
-    chargesheet_date: str | None = None
-    court_code: str | None = None
-    status: str = "open"  # open | chargesheeted | trial | conviction | acquittal | appeal
-    last_modified: str = Field(default_factory=lambda: datetime.now(tz=timezone.utc).isoformat())
+class MockCctnsAdapter:
+    """Read/write CCTNS-shaped JSON for a case.
 
+    Schema (subset of CCTNS CAS v5.0):
+    {
+      "fir_no": str,
+      "district": str,
+      "ps": str,
+      "fir_date": ISO8601,
+      "sections": list[str],
+      "complainant": {name, contact, address},
+      "accused": list[{name, address}],
+      "io": {name, rank, contact},
+      "status": str,  # registered / under_investigation / chargesheeted / etc.
+      "modification_time": ISO8601,
+    }
+    """
 
-# --- File storage ---
+    def __init__(self, data_dir: Path | None = None) -> None:
+        settings = get_settings()
+        self.data_dir = data_dir or settings.mock_cctns_data_dir
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
-def _mock_path() -> Path:
-    """Local JSON file shaped like the CAS export directory."""
-    p = settings.data_dir / "mock_cctns.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+    def _path(self, fir_no: str) -> Path:
+        # Filename-safe version of fir_no
+        safe = fir_no.replace("/", "_").replace("\\", "_")
+        return self.data_dir / f"{safe}.json"
 
+    def read(self, fir_no: str) -> dict[str, Any] | None:
+        p = self._path(fir_no)
+        if not p.exists():
+            return None
+        with p.open("r", encoding="utf-8") as f:
+            return json.load(f)
 
-def _load_all() -> dict[str, CCTNSCase]:
-    """Load all mock cases from the JSON file. Empty if file doesn't exist."""
-    p = _mock_path()
-    if not p.exists():
-        return {}
-    try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
-        return {k: CCTNSCase.model_validate(v) for k, v in raw.items()}
-    except Exception as e:
-        log.error("mock_cctns.load failed: %s", e)
-        return {}
+    def write(self, fir_no: str, record: dict[str, Any]) -> str:
+        record = dict(record)
+        record["fir_no"] = fir_no
+        record["modification_time"] = datetime.utcnow().isoformat()
+        p = self._path(fir_no)
+        with p.open("w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2, ensure_ascii=False)
+        log.info("cctns.write", fir_no=fir_no, path=str(p))
+        return str(p)
 
+    def list_firs(self, district: str | None = None) -> list[str]:
+        out: list[str] = []
+        for p in self.data_dir.glob("*.json"):
+            try:
+                with p.open("r", encoding="utf-8") as f:
+                    rec = json.load(f)
+                if district is None or rec.get("district") == district:
+                    out.append(rec.get("fir_no", p.stem))
+            except (json.JSONDecodeError, OSError):
+                continue
+        return sorted(out)
 
-def _save_all(cases: dict[str, CCTNSCase]) -> None:
-    p = _mock_path()
-    p.write_text(
-        json.dumps({k: v.model_dump() for k, v in cases.items()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    def import_fir(self, fir_no: str) -> dict[str, Any] | None:
+        """Read a CCTNS FIR and return it in Aranmanai format.
 
-
-# --- Public API ---
-
-def push_case(case: CCTNSCase) -> bool:
-    """Push a case to mock CCTNS. Idempotent on case_id."""
-    if settings.cctns_mode != "mock":
-        log.warning("cctns.push_case called but mode=%s (not mock)", settings.cctns_mode)
-        return False
-    cases = _load_all()
-    cases[case.case_id] = case
-    _save_all(cases)
-    log.info("mock_cctns.push case_id=%s status=%s", case.case_id, case.status)
-    return True
-
-
-def pull_case(case_id: str) -> CCTNSCase | None:
-    """Pull a case from mock CCTNS. Returns None if not found."""
-    if settings.cctns_mode != "mock":
-        log.warning("cctns.pull_case called but mode=%s", settings.cctns_mode)
-        return None
-    return _load_all().get(case_id)
-
-
-def list_case_ids() -> list[str]:
-    """List all case_ids in the mock CCTNS store."""
-    if settings.cctns_mode != "mock":
-        return []
-    return list(_load_all().keys())
-
-
-def delete_case(case_id: str) -> bool:
-    """Remove a case from mock CCTNS. Returns True if removed."""
-    if settings.cctns_mode != "mock":
-        return False
-    cases = _load_all()
-    if case_id in cases:
-        del cases[case_id]
-        _save_all(cases)
-        return True
-    return False
+        Maps CCTNS fields to Aranmanai fields. Use this when the user
+        imports a real CCTNS FIR for the first time.
+        """
+        rec = self.read(fir_no)
+        if not rec:
+            return None
+        return {
+            "fir_no": rec["fir_no"],
+            "district": rec.get("district", ""),
+            "court": None,
+            "judge": None,
+            "bns_sections": rec.get("sections", []),
+            "bnss_sections": [],
+            "bsa_sections": [],
+            "facts_text": rec.get("allegations", ""),
+            "fir_date": datetime.fromisoformat(rec["fir_date"]) if "fir_date" in rec else None,
+            "cctns_metadata": rec,
+        }

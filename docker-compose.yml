@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  api:
+    build: .
+    container_name: aranmanai-api
+    ports:
+      - "8080:8080"
+    environment:
+      - ARANMANAI_ENVIRONMENT=production
+      - ARANMANAI_DB_KEY=${ARANMANAI_DB_KEY:?set a 32+ char key}
+      - ARANMANAI_JWT_SECRET=${ARANMANAI_JWT_SECRET:?set a 32+ char secret}
+      - ARANMANAI_LLM_BACKEND=llama_cpp
+      - ARANMANAI_LLM_MODEL_PATH=/app/models/llm/qwen-1.5b-instruct/qwen2.5-1.5b-instruct-q4_k_m.gguf
+      - ARANMANAI_HOST=0.0.0.0
+    volumes:
+      - aranmanai_data:/app/data
+      - aranmanai_models:/app/models
+      - aranmanai_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://127.0.0.1:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build: .
+    container_name: aranmanai-frontend
+    command: ["streamlit", "run", "src/aranmanai/frontend/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    ports:
+      - "8501:8501"
+    environment:
+      - ARANMANAI_ENVIRONMENT=production
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  aranmanai_data:
+  aranmanai_models:
+  aranmanai_logs:

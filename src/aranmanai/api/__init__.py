@@ -1,4 +1,4 @@
-"""Aranmanai API package.
+"""FastAPI application + routes."""
+from aranmanai.api.main import create_app
 
-Each module exports an APIRouter. main.py aggregates them.
-"""
+__all__ = ["create_app"]

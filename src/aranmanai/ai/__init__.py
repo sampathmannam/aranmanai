@@ -1,10 +1,6 @@
-"""Aranmanai AI assist module.
+"""AI layer: LLM client + AI assist services."""
+from aranmanai.ai.llm_client import LLMClient, LLMMessage, LLMResponse
+from aranmanai.ai.mock_client import MockLLMClient
+from aranmanai.ai.factory import get_llm_client
 
-LLM client (llama-cpp-python primary, Ollama secondary, mock fallback)
-+ ChromaDB RAG for BNS/BNSS/BSA + similar-case retrieval.
-
-v1 status: scaffolding only. The LLMClient is wired with a mock
-backend so the API endpoints work end-to-end. The real llama-cpp
-backend activates automatically when settings.llm_model_path points
-to a valid GGUF file.
-"""
+__all__ = ["LLMClient", "LLMMessage", "LLMResponse", "MockLLMClient", "get_llm_client"]

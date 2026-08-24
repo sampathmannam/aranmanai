@@ -1,23 +1,151 @@
 # Aranmanai (அரண்மனை)
 
-District-scoped conviction-rate management platform for Indian police. Named after the Tamil word for "Citadel" / "Fortress".
+> **District-scoped conviction-rate management platform for Indian police.**
+> Modeled on the operational coordination layer (CMS + AI assist + witness prep) that Kishore Kommi (IPS 2019, Eluru SP) and Dheeraj Kunubilli (IPS 2020, Annamayya SP) built and that drove 156% conviction-rate increase in Eluru.
 
-**Mission**: increase district conviction rate 30-50% in 12 months by tracking every case from charge sheet to judgment, coordinating with prosecutors daily, preparing witnesses for cross-examination, and using AI to draft FIRs/chargesheets in minutes instead of hours.
+## Mission
 
-**Status**: v1 in build (Phase 0 — setup).
+Increase district conviction rate 30-50% in 12 months by tracking every case from charge sheet to judgment, coordinating with prosecutors daily, preparing witnesses for cross-examination, and using AI to draft FIRs/chargesheets in minutes instead of hours.
 
-**Specs**:
-- [Design](docs/superpowers/specs/2026-08-24-aranmanai-design.md) — the architecture (8 components, tech stack, trade-offs)
-- [Plan](docs/superpowers/specs/2026-08-24-aranmanai-plan.md) — 12-week build procedure + 12-month end-to-end lifecycle
+## What it does
 
-**Hardware target**: Ryzen 7 7435HS + 16GB RAM + RTX 2050 4GB + 123GB disk (workstation).
+| Component | Function |
+|---|---|
+| **Court Monitoring System (CMS)** | Daily case calendar, per-case timeline, bottleneck detector, witness categorization, SP daily review dashboard |
+| **AI assist** | Complaint intake (voice/text → structured), FIR drafting, case diary drafting, chargesheet drafting, investigation recommendations, witness cross-exam prep — all local LLM |
+| **Witness prep** | Categorization (Supportive/Neutral/Hostile), AI-generated cross-exam briefs, preparation status tracking, witness protection logging |
+| **Voice + Tamil** | Whisper STT, Silero VAD, IndicTrans2 Tamil ↔ English (planned; not v1 critical) |
+| **Acquittal-risk predictor** | LightGBM with 5-7 features + LLM narrative. ADVISORY only — IO/PP/SP make final calls |
+| **Mock state-platform integration** | CCTNS / eSakshya / ICJS adapters shaped to real contracts. Real integration deferred until DGP sign-off |
+| **DPDP / audit compliance** | Hash-chained audit log of every read/write (SHA-256), SQLCipher-encrypted at rest, no PII cloud upload |
+| **Streamlit frontend** | SP daily review, case management, witness prep, AI assist, dashboard |
 
-**Stack**: Python 3.11, FastAPI, SQLite + SQLCipher, Ollama + Phi-3.5-mini, ChromaDB, LightGBM, Whisper.cpp, Silero, IndicTrans2, Streamlit. Free, all open-source.
+## Tech stack
 
-**Pattern sources**:
-- Kishore Kommi (K. Prathap Siva Kishore, IPS 2019, SP Eluru): Dharma App + Court Monitoring System + Nyaya Sahayak
-- Dheeraj Kunubilli (IPS 2020, SP Annamayya): Court Monitoring System with daily case calendar + witness categorization
+- **Backend**: Python 3.11 + FastAPI 0.115
+- **DB**: SQLAlchemy 2.0 + sqlcipher3 (AES-256 encrypted SQLite)
+- **LLM**: Ollama (server) or llama-cpp-python (in-process) — both supported. Default v1 dev = mock
+- **ML**: LightGBM (risk scoring), scikit-learn, sentence-transformers
+- **Voice (planned)**: Whisper.cpp, Silero VAD, IndicTrans2
+- **Frontend**: Streamlit 1.40
+- **Security**: bcrypt (passwords), Fernet (field encryption), JWT (auth)
+- **Observability**: structlog (JSON logs), DPDP §8(3) audit fields
 
-**Constraint**: no real CCTNS / eSakshya / ICJS integration in v1. Mock adapters only, shaped to real contracts. Swap when DGP/SCRB approves.
+## Quick start
 
-**Author**: Sampath M (IPS, SP), with Mavis/Kaavalan-OS assist.
+### Prerequisites
+
+- Python 3.11+
+- Windows 11 / Linux / macOS
+- (Optional) Ollama or a GGUF model file for real LLM inference. v1 dev works with the mock backend.
+
+### Install
+
+```bash
+# Create venv
+python -m venv venv
+# Activate
+.\venv\Scripts\activate       # Windows
+# source venv/bin/activate    # Linux/macOS
+
+# Install deps
+pip install -e ".[dev,ml]"
+
+# Initialize DB + create bootstrap admin
+python scripts/init_db.py
+# Default: admin / Aranmanai!Dev!2026 — CHANGE THIS PASSWORD IMMEDIATELY.
+
+# (Optional) Download a real LLM for v1 dev
+python scripts/download_model.py --model qwen-1.5b
+
+# (Optional) Switch to the real LLM
+set ARANMANAI_LLM_BACKEND=llama_cpp   # Windows
+# export ARANMANAI_LLM_BACKEND=llama_cpp   # Linux/macOS
+set ARANMANAI_LLM_MODEL_PATH=models\llm\qwen-1.5b-instruct\qwen2.5-1.5b-instruct-q4_k_m.gguf
+
+# Run
+python scripts/run_api.py     # API on http://127.0.0.1:8080
+# In another shell:
+streamlit run src/aranmanai/frontend/app.py  # Frontend on http://127.0.0.1:8501
+```
+
+Or just run `scripts/start.bat` (Windows) / `scripts/start.sh` (Linux/macOS) to launch both.
+
+### Docker
+
+```bash
+docker compose up --build
+# API: http://127.0.0.1:8080
+# Frontend: http://127.0.0.1:8501
+```
+
+## Tests
+
+```bash
+# All tests (mock LLM, ~10s)
+pytest tests/ -v
+
+# With coverage
+pytest tests/ --cov=aranmanai --cov-report=term-missing
+
+# Lint
+ruff check src/ tests/ scripts/
+
+# Type check
+mypy src/ --ignore-missing-imports
+```
+
+## Project layout
+
+```
+aranmanai/
+├── docs/superpowers/specs/    # design + plan specs
+├── src/aranmanai/              # application code
+│   ├── api/                    # FastAPI app + routes
+│   ├── ai/                     # LLM client + AI assist services
+│   ├── core/                   # CMS, witness, risk
+│   ├── db/                     # SQLAlchemy models + session
+│   ├── integrations/           # Mock CCTNS/eSakshya/ICJS
+│   ├── security/               # Audit log + crypto
+│   ├── observability/          # Structured logging
+│   ├── config/                 # Pydantic settings
+│   └── frontend/               # Streamlit UI
+├── tests/                      # pytest suite
+│   ├── unit/
+│   ├── integration/
+│   └── e2e/
+├── scripts/                    # CLI entrypoints
+├── models/                     # LLM GGUF files (gitignored)
+├── data/                       # DB + audit log (gitignored)
+├── Dockerfile
+├── docker-compose.yml
+├── pyproject.toml
+└── README.md
+```
+
+## Honest trade-offs (v1)
+
+| Trade-off | Choice | Why | Mitigation |
+|---|---|---|---|
+| Real CCTNS | Mock JSON adapter | No DGP sign-off yet | DGP sign-off swaps real in; mock shaped to real contract |
+| Real eSakshya | Mock SID validation | Same | Same |
+| Multi-district | Single-district only | Lean solo v1 | DB has `district` column; v2 multi-tenant from day 1 |
+| LLM accuracy | Local 1.5-3.8B model | Free, no cloud, RTX 2050 fits | IO/PP must approve every AI output |
+| Team | 1 SP + workstation | Lean solo | v2: 1 IO backup trained by month 6 |
+| Scale-out | No cloud | DPDP §8(4) compliance | All storage local; cloud only for anonymous aggregates |
+
+## License
+
+Proprietary. Internal use only. Not for redistribution.
+
+## Status
+
+- v1.0 in build. Phase 0 done. Phase 1-6 (DB + CMS + AI + Witness + Risk + Mock integrations + API + Frontend) coded in v1 scaffold.
+- All 33 tests passing on mock LLM.
+- Production: needs DGP/SCRB sign-off for real CCTNS/eSakshya/ICJS integration.
+- Pilot: 20-30 cases in the user's own district, 5-10 IOs, 3 months.
+
+## Author
+
+Sampath M (IPS, SP), with Mavis/Kaavalan-OS assist.
+2026-08-24.

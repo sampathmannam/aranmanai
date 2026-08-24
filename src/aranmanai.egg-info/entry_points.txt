@@ -1,0 +1,4 @@
+[console_scripts]
+aranmanai-api = scripts.run_api:main
+aranmanai-download = scripts.download_model:main
+aranmanai-init = scripts.init_db:main

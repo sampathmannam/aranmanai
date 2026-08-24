@@ -1,9 +1,15 @@
-"""State-platform mock integrations.
+"""Mock state-platform integrations.
 
-v1: read + write to local JSON files shaped like the real CCTNS CAS v5.0,
-eSakshya SID packet, and ICJS CNR schemas. Real adapter swap is a 1-line
-change when DGP/SCRB/NIC grants access.
+These adapters read/write local JSON shaped like the real CCTNS / eSakshya
+/ ICJS contracts. When the user gets DGP/SCRB sign-off, swap in the real
+HTTP clients behind the same interface.
 
-Pattern source: nyaya-ai's mock-tool-layer rule. The shape matches the
-real contract so when the DGP sign-off lands, the swap is transparent.
+v1 design principle: every integration is an adapter with a sync/async
+pair of methods. Tests use these mocks. Production swaps in real
+implementations that hit the actual state APIs.
 """
+from aranmanai.integrations.mock_cctns import MockCctnsAdapter
+from aranmanai.integrations.mock_esakshya import MockEsakshyaAdapter
+from aranmanai.integrations.mock_icjs import MockIcjsAdapter
+
+__all__ = ["MockCctnsAdapter", "MockEsakshyaAdapter", "MockIcjsAdapter"]
