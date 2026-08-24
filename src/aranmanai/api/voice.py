@@ -1,0 +1,209 @@
+"""Voice API routes: STT, TTS, full pipeline.
+
+Mounted at /api/v1/voice/* via the main app.
+
+Endpoints:
+- POST /api/v1/voice/transcribe: file upload -> text (STT only)
+- POST /api/v1/voice/pipeline: file upload -> text + segments + language (full VAD+STT)
+- POST /api/v1/voice/speak: text -> audio file (TTS)
+- GET  /api/v1/voice/capabilities: model + device + languages
+
+All voice data is processed locally. DPDP §8(3): every transcription
+returns the audio SHA-256 hash for audit.
+"""
+from __future__ import annotations
+
+import io
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
+
+from aranmanai.config import get_settings
+from aranmanai.core.voice import (
+    PipelineResult,
+    SpeechToText,
+    TextToSpeech,
+    TranscriptionResult,
+    VoicePipeline,
+    voice_to_text,
+)
+from aranmanai.observability import get_logger
+
+log = get_logger(__name__)
+
+router = APIRouter(prefix="/voice", tags=["voice"])
+
+
+# Module-level singletons (lazy-init on first request)
+_stt: Optional[SpeechToText] = None
+_pipeline: Optional[VoicePipeline] = None
+_tts: Optional[TextToSpeech] = None
+
+
+def _get_pipeline() -> VoicePipeline:
+    global _pipeline
+    if _pipeline is None:
+        s = get_settings()
+        _pipeline = VoicePipeline(stt_model_size=s.whisper_model, device=s.whisper_device)
+    return _pipeline
+
+
+def _get_stt() -> SpeechToText:
+    global _stt
+    if _stt is None:
+        s = get_settings()
+        _stt = SpeechToText(model_size=s.whisper_model, device=s.whisper_device)
+    return _stt
+
+
+def _get_tts() -> TextToSpeech:
+    global _tts
+    if _tts is None:
+        _tts = TextToSpeech()
+    return _tts
+
+
+class TranscribeResponse(BaseModel):
+    text: str
+    language: str
+    language_probability: float
+    duration_s: float
+    model: str
+    audio_sha256: str
+
+
+class PipelineResponse(BaseModel):
+    text: str
+    language: str
+    language_probability: float
+    duration_s: float
+    num_segments: int
+    audio_sha256: str
+    segments: list[dict] = Field(default_factory=list)
+
+
+class SpeakRequest(BaseModel):
+    text: str
+    voice_id: Optional[str] = None
+    rate: Optional[int] = None
+
+
+class CapabilitiesResponse(BaseModel):
+    stt_model: str
+    stt_device: str
+    tts_available: bool
+    supported_languages: list[str]
+    max_audio_size_mb: int
+
+
+@router.post("/transcribe", response_model=TranscribeResponse)
+async def transcribe(
+    audio: UploadFile = File(..., description="Audio file (WAV/MP3/M4A/OGG)"),
+    language: Optional[str] = Form(None, description="ISO 639-1: en/ta/hi/..."),
+) -> TranscribeResponse:
+    """STT-only: convert audio to text. Returns language + confidence + audio hash."""
+    settings = get_settings()
+    # Read + size check
+    data = await audio.read()
+    if len(data) > settings.max_audio_size_mb * 1024 * 1024:
+        raise HTTPException(413, f"Audio file too large (>{settings.max_audio_size_mb}MB)")
+    # Write to temp file (faster-whisper expects path)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+        tf.write(data)
+        tmp_path = Path(tf.name)
+    try:
+        stt = _get_stt()
+        r = stt.transcribe_file(tmp_path, language=language)
+        log.info("voice.transcribe lang=%s dur=%.1fs model=%s",
+                 r.language, r.duration_s, r.model)
+        return TranscribeResponse(
+            text=r.text,
+            language=r.language,
+            language_probability=r.language_probability,
+            duration_s=r.duration_s,
+            model=r.model,
+            audio_sha256=r.audio_sha256,
+        )
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+
+@router.post("/pipeline", response_model=PipelineResponse)
+async def pipeline(
+    audio: UploadFile = File(..., description="Audio file (WAV/MP3/M4A/OGG)"),
+    language: Optional[str] = Form(None, description="ISO 639-1: en/ta/hi/..."),
+) -> PipelineResponse:
+    """Full VAD+STT pipeline: split speech segments, transcribe each, join."""
+    settings = get_settings()
+    data = await audio.read()
+    if len(data) > settings.max_audio_size_mb * 1024 * 1024:
+        raise HTTPException(413, f"Audio file too large (>{settings.max_audio_size_mb}MB)")
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+        tf.write(data)
+        tmp_path = Path(tf.name)
+    try:
+        pipe = _get_pipeline()
+        r = pipe.transcribe_file(tmp_path, language=language)
+        log.info("voice.pipeline lang=%s dur=%.1fs segs=%d",
+                 r.language, r.duration_s, r.num_segments)
+        return PipelineResponse(
+            text=r.text,
+            language=r.language,
+            language_probability=r.language_probability,
+            duration_s=r.duration_s,
+            num_segments=r.num_segments,
+            audio_sha256=r.audio_sha256,
+            segments=[
+                {"start": s.start, "end": s.end, "text": s.text, "no_speech_prob": s.no_speech_prob}
+                for s in [seg for seg in r.per_segment for _ in range(1)]
+            ] if False else [  # flat list of per-segment dicts
+                {"start": ps.segments[0]["start"] if ps.segments else 0,
+                 "end": ps.segments[0]["end"] if ps.segments else 0,
+                 "text": ps.text}
+                for ps in r.per_segment
+            ],
+        )
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+
+@router.post("/speak")
+async def speak(req: SpeakRequest):
+    """TTS: synthesize text to a WAV file. Returns audio/wav."""
+    tts = _get_tts()
+    if req.rate:
+        tts.rate = req.rate
+    if req.voice_id:
+        tts.voice_id = req.voice_id
+    out_path = Path(tempfile.gettempdir()) / f"aranmanai_tts_{hash(req.text) & 0xffffffff}.wav"
+    tts.to_file(out_path, req.text)
+    return FileResponse(
+        path=str(out_path),
+        media_type="audio/wav",
+        filename=out_path.name,
+    )
+
+
+@router.get("/capabilities", response_model=CapabilitiesResponse)
+async def capabilities() -> CapabilitiesResponse:
+    """Report what the voice module can do."""
+    settings = get_settings()
+    return CapabilitiesResponse(
+        stt_model=settings.whisper_model,
+        stt_device=settings.whisper_device,
+        tts_available=_get_tts()._ensure_engine() is not None if _tts is not None else False,
+        supported_languages=[
+            "en", "ta", "hi", "te", "kn", "ml", "mr", "bn", "gu", "pa", "ur",
+        ],
+        max_audio_size_mb=settings.max_audio_size_mb,
+    )

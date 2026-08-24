@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from aranmanai.api.v1 import ai, auth, cases, cms, hearings, risk, witnesses
+from aranmanai.api import tamil, voice
 from aranmanai.config import get_settings
 from aranmanai.db import init_db
 from aranmanai.observability import get_logger, setup_logging
@@ -68,6 +69,8 @@ def create_app() -> FastAPI:
     app.include_router(ai.router, prefix="/api/v1/ai", tags=["ai"])
     app.include_router(cms.router, prefix="/api/v1/cms", tags=["cms"])
     app.include_router(risk.router, prefix="/api/v1/risk", tags=["risk"])
+    app.include_router(voice.router, prefix="/api/v1", tags=["voice"])
+    app.include_router(tamil.router, prefix="/api/v1", tags=["tamil"])
 
     return app
 
