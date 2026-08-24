@@ -76,11 +76,13 @@ def main_page() -> None:
         st.rerun()
     page = st.sidebar.radio(
         "Navigate",
-        ["Today", "Cases", "Witnesses", "SP Dashboard", "AI Assist", "Voice", "Tamil"],
+        ["Today", "CMC Morning", "Cases", "Witnesses", "SP Dashboard", "AI Assist", "Voice", "Tamil"],
         index=0,
     )
     if page == "Today":
         render_today()
+    elif page == "CMC Morning":
+        render_cmc_morning()
     elif page == "Cases":
         render_cases()
     elif page == "Witnesses":
@@ -181,6 +183,88 @@ def render_sp_dashboard() -> None:
     st.subheader("Top actions")
     for a in data.get("top_actions", []):
         st.write(f"- {a}")
+
+
+def render_cmc_morning() -> None:
+    """CMC morning view — Kishore's accountability loop, in the UI.
+
+    The SP sees this at 10am. Their job:
+    1. Review escalations (overdue actions)
+    2. Review pending actions
+    3. Open today's meeting (if not already)
+    4. Sign off on every case
+    """
+    st.header("CMC Morning — 10am Review")
+    st.caption("Kishore's accountability loop. SP reviews every case daily.")
+    token = st.session_state["token"]
+
+    # Top row: KPIs
+    try:
+        view = api_get("/api/v1/cmc/daily-view", token=token)
+    except Exception as e:
+        st.error(f"Failed to load CMC view: {e}")
+        return
+
+    cols = st.columns(5)
+    cols[0].metric("Today's hearings", view["n_hearings"])
+    cols[1].metric("Pending actions", view["n_actions_pending"])
+    cols[2].metric("Overdue actions", view["n_actions_overdue"], delta_color="inverse")
+    cols[3].metric("Open escalations", view["n_escalations_open"], delta_color="inverse")
+    cols[4].metric("Cases unreviewed", view["n_cases_unreviewed"], delta_color="inverse")
+
+    # Open meeting
+    st.subheader("1. Open morning meeting")
+    if st.button("Open today's CMC meeting"):
+        try:
+            r = api_post("/api/v1/cmc/meeting", {"minutes": "Daily CMC — 10am"}, token=token)
+            st.success(f"Meeting opened: {r['meeting_id'][:8]}...")
+            st.session_state["last_meeting_id"] = r["meeting_id"]
+        except Exception as e:
+            st.error(f"Failed: {e}")
+
+    # Today's hearings
+    st.subheader("2. Today's hearings")
+    if not view["hearings"]:
+        st.info("No hearings today.")
+    for h in view["hearings"]:
+        reviewed = h.get("sp_reviewed", "pending")
+        icon = {"reviewed": "OK", "escalated": "ESC", "cleared": "CLR", "pending": "..."}.get(reviewed, "?")
+        with st.expander(f"[{icon}] {h['fir_no']} — {h['stage']}"):
+            st.write(f"Hearing: {h['date']}")
+            st.write(f"PP present: {h['pp_present']}, Accused: {h['accused_present']}")
+            if st.button(f"Mark reviewed", key=f"sp_rev_{h['hearing_id']}"):
+                try:
+                    api_post("/api/v1/cmc/sp-review",
+                             {"case_id": h["case_id"], "status": "reviewed"}, token=token)
+                    st.success("Marked reviewed. Refresh to see update.")
+                except Exception as e:
+                    st.error(f"Failed: {e}")
+
+    # Overdue actions
+    st.subheader("3. Overdue actions (raised escalations)")
+    if not view["overdue_actions"]:
+        st.success("No overdue actions.")
+    for a in view["overdue_actions"]:
+        with st.expander(f"[{a['priority']}] {a['description']} (FIR: {a['fir_no']})"):
+            st.write(f"Assigned to: {a['assigned_role']}")
+            st.write(f"Due: {a['due_date']}")
+
+    # Open escalations
+    st.subheader("4. Open escalations")
+    if not view["open_escalations"]:
+        st.success("No open escalations.")
+    for e in view["open_escalations"]:
+        sev = {"critical": "🔴", "warning": "🟠", "info": "⚪"}.get(e["severity"], "⚪")
+        with st.expander(f"{sev} {e['reason']} (FIR: {e['fir_no']})"):
+            st.write(f"Detail: {e.get('detail') or '—'}")
+            st.write(f"Raised: {e['created_at']}")
+
+    # Top priority actions
+    st.subheader("5. Top priority actions")
+    if not view["top_priority"]:
+        st.info("Nothing pending.")
+    for a in view["top_priority"]:
+        st.write(f"- [{a['priority']}] {a['description'][:80]} (FIR: {a['fir_no']}, status: {a['status']})")
 
 
 def render_ai_assist() -> None:
