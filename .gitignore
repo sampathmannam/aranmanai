@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (case data, audit logs - never commit)
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/chroma/
+data/backups/
+
+# Models (downloaded, not committed)
+models/*.pkl
+models/*.gguf
+models/*.bin
+models/llm/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Secrets (if any local config)
+.env
+*.secret
+
+# OS-generated
+nul
+0
