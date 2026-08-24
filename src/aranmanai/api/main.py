@@ -7,7 +7,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from aranmanai.api.v1 import ai, auth, cases, cms, coordination, hearings, risk, witnesses
+from aranmanai.api.v1 import ai, auth, cases, cms, coordination, dpdp, hearings, pilot, risk, witnesses
 from aranmanai.api import tamil, voice
 from aranmanai.config import get_settings
 from aranmanai.db import init_db
@@ -70,6 +70,8 @@ def create_app() -> FastAPI:
     app.include_router(cms.router, prefix="/api/v1/cms", tags=["cms"])
     app.include_router(coordination.router, prefix="/api/v1/cms", tags=["cms-coordination"])
     app.include_router(risk.router, prefix="/api/v1/risk", tags=["risk"])
+    app.include_router(pilot.router, prefix="/api/v1", tags=["pilot"])
+    app.include_router(dpdp.router, prefix="/api/v1", tags=["dpdp"])
     app.include_router(voice.router, prefix="/api/v1", tags=["voice"])
     app.include_router(tamil.router, prefix="/api/v1", tags=["tamil"])
 

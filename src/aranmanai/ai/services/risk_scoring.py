@@ -57,6 +57,11 @@ class RiskScoringService:
             bnss_173_compliant=request.bnss_173_compliant,
             lapse_count=len(request.lapses),
             fatal_lapse_count=sum(1 for l in request.lapses if l.get("tier") == "FATAL"),
+            offence_type="other",
+            days_since_fir=0,
+            has_cctv=False,
+            evidence_chain_broken=False,
+            witness_last_contact_days=None,
         )
         score = self.predictor.predict_proba(features)
         band = self.predictor.band(score)

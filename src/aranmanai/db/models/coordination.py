@@ -1,10 +1,11 @@
-"""Operational coordination models: notes, witness production, daily review, alerts.
+"""Operational coordination models: notes, witness production, daily review, alerts, pilot.
 
 These power Kishore Kommi's accountability loop:
 - SP-IO-PP chat per case (coordination_note)
 - Witness production tracking per hearing (witness_production)
 - SP daily review entries (daily_review)
 - Proactive alerts (alert)
+- Pilot measurement (pilot_case)
 
 DPDP §8(3): every entry has actor_id, timestamp; sensitive fields
 encrypted; audit hash chained.
@@ -230,3 +231,66 @@ class Alert(Base):
 
     def __repr__(self) -> str:
         return f"<Alert {self.alert_type} {self.severity} case={self.case_id[:8] if self.case_id else None}>"
+
+
+# ──────────────────────────────────────────────────────────────
+# Pilot case — tracks conviction rate measurement
+# ──────────────────────────────────────────────────────────────
+
+
+class PilotCase(Base):
+    """One row per case in the conviction-rate pilot.
+
+    Measures the delta between baseline (before Aranmanai cures) and
+    post-cure conviction probability. Used to compute the delta attributable
+    to the Aranmanai system.
+
+    The pilot is the make-or-break measurement: did the system move
+    conviction rate? Kishore Kommi achieved 156% increase (from 51/41 to
+    132/41 cases) with the CMC coordination loop — this model tracks whether
+    Aranmanai achieves a similar effect.
+    """
+    __tablename__ = "pilot_case"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("case.id"), index=True, nullable=False)
+    district: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    enrolled_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False)
+    enrolled_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Baseline (measured BEFORE Aranmanai cures applied)
+    baseline_p_conviction: Mapped[float | None] = mapped_column(nullable=True)  # 0-1
+    baseline_offence: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    baseline_court: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    baseline_lapse_count: Mapped[int | None] = mapped_column(nullable=True)
+    baseline_fatal_lapse_count: Mapped[int | None] = mapped_column(nullable=True)
+
+    # Cures applied (list of {lapse_key, cure_action, applied_at})
+    cures_applied: Mapped[list] = mapped_column(JSON, default=list)
+
+    # Post-cure measurements (measured after at least one hearing cycle)
+    post_p_conviction: Mapped[float | None] = mapped_column(nullable=True)  # 0-1
+    post_lapse_count: Mapped[int | None] = mapped_column(nullable=True)
+    post_fatal_lapse_count: Mapped[int | None] = mapped_column(nullable=True)
+    post_hostile_witnesses: Mapped[int | None] = mapped_column(nullable=True)
+
+    # Outcome (the actual case outcome — filled when judgment is delivered)
+    outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)  # convicted | acquitted | compromised | pending
+    outcome_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sentence: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # Measurement timestamps
+    mid_review_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Notes
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<PilotCase {self.case_id[:8]} outcome={self.outcome}>"
+

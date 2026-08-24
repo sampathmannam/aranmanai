@@ -1,0 +1,23 @@
+{
+  "feature_cols": [
+    "evidence_strength",
+    "witness_count",
+    "hostile_witness_pct",
+    "lapse_count",
+    "fatal_lapse_count",
+    "fatal_lapse_ratio",
+    "fsl_overdue",
+    "bnss_173_compliant",
+    "days_since_fir",
+    "offence_type",
+    "has_cctv",
+    "evidence_chain_broken",
+    "witness_not_contacted_14d"
+  ],
+  "auc": 0.7233660648294794,
+  "brier": 0.2062957347375438,
+  "n_train": 1600,
+  "n_test": 400,
+  "acquittal_rate": 0.6145,
+  "train_date": "2026-08-24T22:43:22.624270"
+}

@@ -10,6 +10,7 @@ from aranmanai.db.models.coordination import (
     WitnessProduction, ProductionStatus,
     DailyCaseReview, ReviewStatus,
     Alert, AlertType, AlertSeverity,
+    PilotCase,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "WitnessProduction", "ProductionStatus",
     "DailyCaseReview", "ReviewStatus",
     "Alert", "AlertType", "AlertSeverity",
+    "PilotCase",
 ]
