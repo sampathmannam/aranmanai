@@ -90,6 +90,19 @@ class Settings(BaseSettings):
     enable_risk_scoring: bool = True
     enable_mock_integrations: bool = True
 
+    # ── Voice (STT / TTS) ──
+    whisper_model: str = Field(default="small", description="tiny|base|small|medium")
+    whisper_device: str = "cpu"  # CPU is fine for Whisper small on Ryzen
+    vad_threshold: float = 0.5
+    max_audio_size_mb: int = 50
+
+    # ── Tamil (translation / embeddings) ──
+    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    translation_model_enta: str = "Helsinki-NLP/opus-mt-en-ta"
+    translation_model_taen: str = "Helsinki-NLP/opus-mt-ta-en"
+    translation_model_enhi: str = "Helsinki-NLP/opus-mt-en-hi"
+    translation_model_hien: str = "Helsinki-NLP/opus-mt-hi-en"
+
     def is_production(self) -> bool:
         return self.environment == "production"
 
