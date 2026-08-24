@@ -7,23 +7,29 @@ Endpoints:
 - POST /cmc/meeting                        - SP opens morning meeting
 - POST /cmc/meeting/{id}/action            - SP assigns an action to IO/PP
 - PATCH /cmc/action/{id}/answer            - IO/PP reports back
+- PATCH /cmc/action/{id}/pp-answer         - PP answers (separate from IO)
 - PATCH /cmc/action/{id}/sp-reviewed       - SP signs off on the answer
 - POST /cmc/sweep                          - cron: mark overdue + raise escalations
 - PATCH /cmc/escalation/{id}/acknowledge
 - PATCH /cmc/escalation/{id}/resolve
 - POST /cmc/sp-review                      - SP per-case sign-off (every morning)
 - GET  /cmc/daily-view                     - the morning CMC view
+- POST /cmc/constable/record-performance   - auto-compute constable KPIs
+- POST /cmc/constable/commend              - cash reward + commendation
+- POST /cmc/constable/penalize             - warning/memo/transfer
+- GET  /cmc/dsp-weekly-rollup               - DSP station-by-station review
+- GET  /cmc/pilot-metrics                  - conviction rate + delta
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date as _date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from aranmanai.ai.services.cmc_loop import CmcLoopService
-from aranmanai.api.deps import CurrentUser, DbSession, IoUser, PpUser, SpUser
+from aranmanai.api.deps import CurrentUser, DbSession, DspUser, IoUser, PpUser, SpUser
 from aranmanai.db.models.coordination import (
     ActionItem,
     ActionPriority,
@@ -48,7 +54,7 @@ def _audit() -> AuditLog:
 # ──────────────────────────────────────────────────────────
 
 class CmcMeetingRequest(BaseModel):
-    meeting_date: Optional[str] = None  # ISO; default = now
+    meeting_date: Optional[str] = None
     attendees: list[str] = []
     minutes: Optional[str] = None
 
@@ -67,14 +73,20 @@ class CmcActionAssignRequest(BaseModel):
     description: str
     action_type: str
     assigned_to: str
-    assigned_role: str  # io | pp | court_constable | sp
-    due_date: str       # ISO datetime
+    assigned_role: str
+    due_date: str
     priority: ActionPriority = ActionPriority.HIGH
 
 
 class CmcActionAnswerRequest(BaseModel):
-    answer: str  # done | not_done | blocked
+    answer: str
     answer_detail: Optional[str] = None
+
+
+class CmcPpAnswerRequest(BaseModel):
+    answer: str  # ready | not_ready | needs_evidence | blocked
+    answer_detail: Optional[str] = None
+    evidence_needed: list[str] = []
 
 
 class CmcEscalationAcknowledgeRequest(BaseModel):
@@ -87,8 +99,8 @@ class CmcEscalationResolveRequest(BaseModel):
 
 class CmcSpReviewRequest(BaseModel):
     case_id: str
-    review_date: Optional[str] = None  # ISO date; default = today
-    status: str = "reviewed"  # reviewed | escalated | cleared
+    review_date: Optional[str] = None
+    status: str = "reviewed"
     notes: Optional[str] = None
 
 
@@ -113,13 +125,30 @@ class CmcDailyViewResponse(BaseModel):
     sp_signoff_status: dict
 
 
+class ConstableRecordPerformanceRequest(BaseModel):
+    constable_id: str
+    period_month: str  # YYYY-MM
+
+
+class ConstableCommendRequest(BaseModel):
+    performance_id: str
+    cash_reward_amount: int = 0
+    issue_certificate: bool = True
+    reason: Optional[str] = None
+
+
+class ConstablePenalizeRequest(BaseModel):
+    performance_id: str
+    action_type: str  # warning | memo | transfer
+    reason: str
+
+
 # ──────────────────────────────────────────────────────────
 # Endpoints
 # ──────────────────────────────────────────────────────────
 
 @router.post("/meeting", response_model=CmcMeetingResponse, status_code=201)
 def open_meeting(req: CmcMeetingRequest, user: SpUser, db: DbSession) -> CmcMeetingResponse:
-    """SP opens the morning CMC meeting. Idempotent per district per day."""
     svc = CmcLoopService(db)
     meeting_date = datetime.fromisoformat(req.meeting_date) if req.meeting_date else datetime.utcnow()
     m = svc.open_meeting(
@@ -131,7 +160,7 @@ def open_meeting(req: CmcMeetingRequest, user: SpUser, db: DbSession) -> CmcMeet
     )
     n_actions = db.query(ActionItem).filter(ActionItem.meeting_id == m.id).count()
     _audit().append(
-        AuditAction.CREATE_WITNESS,  # reuse
+        AuditAction.CREATE_WITNESS,
         actor_id=user.id,
         subject_id=m.id,
         metadata={"action": "cmc_open_meeting", "n_attendees": len(req.attendees)},
@@ -148,7 +177,6 @@ def open_meeting(req: CmcMeetingRequest, user: SpUser, db: DbSession) -> CmcMeet
 
 @router.post("/meeting/{meeting_id}/action", status_code=201)
 def assign_action(meeting_id: str, req: CmcActionAssignRequest, user: SpUser, db: DbSession) -> dict:
-    """SP assigns an action to an IO/PP during the CMC meeting."""
     svc = CmcLoopService(db)
     a = svc.assign_action(
         meeting_id=meeting_id,
@@ -177,7 +205,6 @@ def assign_action(meeting_id: str, req: CmcActionAssignRequest, user: SpUser, db
 
 @router.patch("/action/{action_id}/answer")
 def answer_action(action_id: str, req: CmcActionAnswerRequest, user: IoUser, db: DbSession) -> dict:
-    """IO/PP reports back: done / not_done / blocked. Closes the loop for this action."""
     svc = CmcLoopService(db)
     try:
         a = svc.answer_action(
@@ -202,9 +229,41 @@ def answer_action(action_id: str, req: CmcActionAnswerRequest, user: IoUser, db:
     }
 
 
+@router.patch("/action/{action_id}/pp-answer")
+def pp_answer_action(action_id: str, req: CmcPpAnswerRequest, user: PpUser, db: DbSession) -> dict:
+    """Public prosecutor answers the CMC action — separate from the IO's answer.
+
+    Per Kishore: PPs and IOs are both answerable. Their timelines are
+    tracked separately so neither can hide behind the other.
+    """
+    svc = CmcLoopService(db)
+    try:
+        ans = svc.pp_answer(
+            action_id=action_id,
+            pp_id=user.id,
+            answer=req.answer,
+            answer_detail=req.answer_detail,
+            evidence_needed=req.evidence_needed,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    _audit().append(
+        AuditAction.UPDATE_WITNESS,
+        actor_id=user.id,
+        subject_id=action_id,
+        metadata={"action": "cmc_pp_answer", "answer": req.answer},
+    )
+    return {
+        "action_id": ans.action_id,
+        "pp_id": ans.pp_id,
+        "answer": ans.answer,
+        "evidence_needed": ans.evidence_needed,
+        "answered_at": ans.answered_at.isoformat(),
+    }
+
+
 @router.patch("/action/{action_id}/sp-reviewed")
 def sp_review_action(action_id: str, user: SpUser, db: DbSession) -> dict:
-    """SP signs off on the IO/PP's answer."""
     svc = CmcLoopService(db)
     try:
         a = svc.mark_sp_reviewed(action_id)
@@ -215,7 +274,6 @@ def sp_review_action(action_id: str, user: SpUser, db: DbSession) -> dict:
 
 @router.post("/sweep", response_model=CmcSweepResponse)
 def sweep_overdue(user: SpUser, db: DbSession) -> CmcSweepResponse:
-    """Mark overdue actions + raise escalations. Run by cron every morning at 9am."""
     svc = CmcLoopService(db)
     n_overdue_before = db.query(ActionItem).filter(ActionItem.status == ActionStatus.OVERDUE).count()
     n_esc = svc.check_overdue()
@@ -226,7 +284,6 @@ def sweep_overdue(user: SpUser, db: DbSession) -> CmcSweepResponse:
 
 @router.patch("/escalation/{escalation_id}/acknowledge")
 def acknowledge_escalation(escalation_id: str, req: CmcEscalationAcknowledgeRequest, user: IoUser, db: DbSession) -> dict:
-    """IO/PP acknowledges the escalation. Required before they can resolve it."""
     svc = CmcLoopService(db)
     try:
         e = svc.acknowledge_escalation(escalation_id, note=req.note)
@@ -237,7 +294,6 @@ def acknowledge_escalation(escalation_id: str, req: CmcEscalationAcknowledgeRequ
 
 @router.patch("/escalation/{escalation_id}/resolve")
 def resolve_escalation(escalation_id: str, req: CmcEscalationResolveRequest, user: SpUser, db: DbSession) -> dict:
-    """SP resolves the escalation with a note."""
     svc = CmcLoopService(db)
     try:
         e = svc.resolve_escalation(escalation_id, note=req.note)
@@ -248,8 +304,6 @@ def resolve_escalation(escalation_id: str, req: CmcEscalationResolveRequest, use
 
 @router.post("/sp-review", status_code=201)
 def sp_review_case(req: CmcSpReviewRequest, user: SpUser, db: DbSession) -> dict:
-    """SP signs off on a case for a given day. The core accountability loop."""
-    from datetime import date as _date
     svc = CmcLoopService(db)
     review_date = _date.fromisoformat(req.review_date) if req.review_date else _date.today()
     r = svc.sp_review_case(
@@ -277,8 +331,6 @@ def sp_review_case(req: CmcSpReviewRequest, user: SpUser, db: DbSession) -> dict
 
 @router.get("/daily-view", response_model=CmcDailyViewResponse)
 def daily_view(user: SpUser, db: DbSession, target_date: Optional[str] = None) -> CmcDailyViewResponse:
-    """The full CMC morning view: today's hearings + actions + escalations + SP signoff status."""
-    from datetime import date as _date
     svc = CmcLoopService(db)
     target = _date.fromisoformat(target_date) if target_date else _date.today()
     v = svc.daily_view(district=user.district, target_date=target)
@@ -297,3 +349,136 @@ def daily_view(user: SpUser, db: DbSession, target_date: Optional[str] = None) -
         top_priority=v.top_priority,
         sp_signoff_status=v.sp_signoff_status,
     )
+
+
+# ──────────────────────────────────────────────────────────
+# Court constable personnel loop
+# ──────────────────────────────────────────────────────────
+
+@router.post("/constable/record-performance", status_code=201)
+def constable_record_performance(req: ConstableRecordPerformanceRequest, user: SpUser, db: DbSession) -> dict:
+    """Auto-compute constable's monthly performance from hearing data."""
+    svc = CmcLoopService(db)
+    perf = svc.record_constable_performance(
+        constable_id=req.constable_id,
+        district=user.district,
+        period_month=req.period_month,
+    )
+    _audit().append(
+        AuditAction.UPDATE_WITNESS,
+        actor_id=user.id,
+        subject_id=perf.id,
+        metadata={"action": "constable_record_performance", "constable_id": req.constable_id, "month": req.period_month},
+    )
+    return {
+        "performance_id": perf.id,
+        "constable_id": perf.constable_id,
+        "period_month": perf.period_month,
+        "hearings_attended": perf.hearings_attended,
+        "witnesses_produced": perf.witnesses_produced,
+        "witness_production_rate": round(perf.witness_production_rate, 4),
+        "on_time_pct": round(perf.on_time_pct, 4),
+        "excellence_flag": perf.excellence_flag,
+        "negligence_flag": perf.negligence_flag,
+    }
+
+
+@router.post("/constable/commend")
+def constable_commend(req: ConstableCommendRequest, user: SpUser, db: DbSession) -> dict:
+    """Award a constable: cash reward + commendation certificate.
+
+    Per Kishore: 'court constables who show excellence in their duties
+    will be rewarded with cash and commendation certificates'.
+    """
+    svc = CmcLoopService(db)
+    try:
+        perf = svc.commend_constable(
+            performance_id=req.performance_id,
+            commended_by=user.id,
+            cash_reward_amount=req.cash_reward_amount,
+            issue_certificate=req.issue_certificate,
+            reason=req.reason,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    _audit().append(
+        AuditAction.UPDATE_WITNESS,
+        actor_id=user.id,
+        subject_id=perf.id,
+        metadata={"action": "constable_commend", "cash": req.cash_reward_amount, "cert": req.issue_certificate},
+    )
+    return {
+        "performance_id": perf.id,
+        "constable_id": perf.constable_id,
+        "excellence_flag": perf.excellence_flag,
+        "cash_reward_amount": perf.cash_reward_amount,
+        "commendation_certificate": perf.commendation_certificate,
+        "commended_by": perf.commended_by,
+        "commended_at": perf.commended_at.isoformat() if perf.commended_at else None,
+    }
+
+
+@router.post("/constable/penalize")
+def constable_penalize(req: ConstablePenalizeRequest, user: SpUser, db: DbSession) -> dict:
+    """Penalize a constable: warning / memo / transfer.
+
+    Per Kishore: 'any negligence in duty would result in action'.
+    """
+    svc = CmcLoopService(db)
+    try:
+        perf = svc.penalize_constable(
+            performance_id=req.performance_id,
+            actioned_by=user.id,
+            action_type=req.action_type,
+            reason=req.reason,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    _audit().append(
+        AuditAction.UPDATE_WITNESS,
+        actor_id=user.id,
+        subject_id=perf.id,
+        metadata={"action": "constable_penalize", "action_type": req.action_type, "reason": req.reason},
+    )
+    return {
+        "performance_id": perf.id,
+        "constable_id": perf.constable_id,
+        "negligence_flag": perf.negligence_flag,
+        "action_taken": perf.action_taken,
+        "action_taken_by": perf.action_taken_by,
+        "action_taken_at": perf.action_taken_at.isoformat() if perf.action_taken_at else None,
+    }
+
+
+# ──────────────────────────────────────────────────────────
+# DSP weekly rollup
+# ──────────────────────────────────────────────────────────
+
+@router.get("/dsp-weekly-rollup")
+def dsp_weekly_rollup(user: DspUser, db: DbSession, week_start: Optional[str] = None) -> dict:
+    """DSP-level weekly review: one row per police station in district.
+
+    Per The Hindu [11]: IGP directed DSPs to review cases station-wise
+    every week. This endpoint is the rollup above the SP's daily view.
+    """
+    svc = CmcLoopService(db)
+    week_start_date = _date.fromisoformat(week_start) if week_start else _date.today()
+    # Roll back to Monday
+    week_start_date = week_start_date - timedelta(days=week_start_date.weekday())
+    return svc.dsp_weekly_rollup(district=user.district, week_start=week_start_date)
+
+
+# ──────────────────────────────────────────────────────────
+# Pilot conviction rate measurement
+# ──────────────────────────────────────────────────────────
+
+@router.get("/pilot-metrics")
+def pilot_metrics(user: SpUser, db: DbSession, district: Optional[str] = None) -> dict:
+    """Conviction rate + delta vs baseline for the pilot.
+
+    Returns the actual conviction rate from closed pilot cases plus
+    the delta against the baseline p_conviction captured at enrollment.
+    This is the endpoint that proves whether the system moved the rate.
+    """
+    svc = CmcLoopService(db)
+    return svc.pilot_conviction_metrics(district=district or user.district)

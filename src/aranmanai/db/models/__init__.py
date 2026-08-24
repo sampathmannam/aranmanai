@@ -15,6 +15,8 @@ from aranmanai.db.models.coordination import (
     ActionItem, ActionPriority, ActionStatus,
     SpDailyReview,
     Escalation, EscalationStatus,
+    CourtConstablePerformance,
+    PpAnswer,
 )
 
 __all__ = [
@@ -33,4 +35,6 @@ __all__ = [
     "ActionItem", "ActionPriority", "ActionStatus",
     "SpDailyReview",
     "Escalation", "EscalationStatus",
+    "CourtConstablePerformance",
+    "PpAnswer",
 ]

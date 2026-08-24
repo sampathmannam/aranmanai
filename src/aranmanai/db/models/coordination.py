@@ -498,3 +498,100 @@ class Escalation(Base):
     def __repr__(self) -> str:
         return f"<Escalation {self.severity} case={self.case_id[:8]} status={self.status.value}>"
 
+
+# ──────────────────────────────────────────────────────────────
+# Court constable personnel loop — rewards & penalties
+# This is what Kishore's CMC does that Aranmanai previously missed.
+# Per Deccan Chronicle: constables who excel get cash + commendation;
+# negligence triggers action. We track this explicitly.
+# ──────────────────────────────────────────────────────────────
+
+
+class CourtConstablePerformance(Base):
+    """Monthly performance record for each court constable.
+
+    Tracks: witnesses produced, hearings attended, excellence/penalty flags,
+    cash reward amount, commendation certificate status, action-taken status.
+    """
+    __tablename__ = "court_constable_performance"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    constable_id: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), index=True, nullable=False)
+    district: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    period_month: Mapped[str] = mapped_column(String(7), index=True, nullable=False)  # YYYY-MM
+
+    # Counters (auto-computed from hearing/CMC records)
+    hearings_attended: Mapped[int] = mapped_column(default=0, nullable=False)
+    witnesses_produced: Mapped[int] = mapped_column(default=0, nullable=False)
+    witness_production_rate: Mapped[float] = mapped_column(default=0.0, nullable=False)  # 0-1
+    cases_supported: Mapped[int] = mapped_column(default=0, nullable=False)
+    on_time_pct: Mapped[float] = mapped_column(default=0.0, nullable=False)
+
+    # Reward / penalty fields
+    excellence_flag: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
+    excellence_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cash_reward_amount: Mapped[int] = mapped_column(default=0, nullable=False)
+    commendation_certificate: Mapped[bool] = mapped_column(default=False, nullable=False)
+    commended_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("user.id"), nullable=True)
+    commended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Penalty fields
+    negligence_flag: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
+    negligence_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action_taken: Mapped[str | None] = mapped_column(String(64), nullable=True)  # warning | memo | transfer
+    action_taken_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("user.id"), nullable=True)
+    action_taken_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_ccp_constable_period", "constable_id", "period_month", unique=True),
+    )
+
+    def __repr__(self) -> str:
+        return f"<CourtConstablePerformance {self.period_month} constable={self.constable_id[:8]} exc={self.excellence_flag} neg={self.negligence_flag}>"
+
+
+# ──────────────────────────────────────────────────────────────
+# PP answer — public prosecutor accountability on the same ActionItem
+# Kishore: PP must answer back just like the IO. We store the PP answer
+# separately so we don't conflate IO and PP answer timelines.
+# ──────────────────────────────────────────────────────────────
+
+
+class PpAnswer(Base):
+    """Public prosecutor's answer to a CMC action.
+
+    Separate from ActionItem.answer so the prosecution and investigation
+    sides can each give their answer without overwriting the other.
+    """
+    __tablename__ = "pp_answer"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    action_id: Mapped[str] = mapped_column(String(36), ForeignKey("action_item.id"), index=True, nullable=False)
+    case_id: Mapped[str] = mapped_column(String(36), ForeignKey("case.id"), index=True, nullable=False)
+
+    pp_id: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False)
+    answer: Mapped[str] = mapped_column(String(32), nullable=False)  # ready | not_ready | needs_evidence | blocked
+    answer_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # If PP needs evidence, list what is needed
+    evidence_needed: Mapped[list] = mapped_column(JSON, default=list)
+
+    answered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_pp_answer_action", "action_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PpAnswer action={self.action_id[:8]} answer={self.answer}>"
+
+

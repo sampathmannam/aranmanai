@@ -16,9 +16,12 @@ if TYPE_CHECKING:
 
 
 class UserRole(str, enum.Enum):
-    SP = "sp"          # Superintendent of Police
-    IO = "io"          # Investigating Officer
-    PP = "pp"          # Public Prosecutor
+    SP = "sp"                  # Superintendent of Police
+    IO = "io"                  # Investigating Officer
+    PP = "pp"                  # Public Prosecutor
+    COURT_CONSTABLE = "court_constable"  # Court constable (Kishore's CMC layer)
+    DSP = "dsp"                # Deputy Superintendent of Police
+    WOMEN_PATROL = "women_patrol"  # Women patrol unit (Abhaya equivalent)
     ADMIN = "admin"
     AUDITOR = "auditor"
 
