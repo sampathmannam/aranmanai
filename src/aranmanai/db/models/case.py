@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from aranmanai.db.session import Base
@@ -60,6 +60,13 @@ class Case(Base):
     bsa_sections: Mapped[list[str]] = mapped_column(JSON, default=list)
     poa_sections: Mapped[list[str]] = mapped_column(JSON, default=list)  # SC/ST PoA Act sections
     is_poa_act_case: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # v1.1: POCSO (Protection of Children from Sexual Offences Act, 2012)
+    # and BNS 304B (dowry death) — the two case types the District Child
+    # Protection Officer asks about quarterly. The IO sets this flag
+    # when filing the FIR. F11 (family liaison) refuses to record a
+    # briefing if the flag is not set, so the DCPO report is
+    # POCSO/304B-only and credible.
+    is_pocso_or_304b_case: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     # Facts (plaintext summary — not encrypted in pilot seed)
     facts: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -143,3 +150,15 @@ class Case(Base):
 
     def __repr__(self) -> str:
         return f"<Case {self.fir_no} status={self.status.value} stage={self.stage.value}>"
+
+    # v1.1: UNIQUE(fir_no, district) prevents two IOs from creating
+    # different cases with the same FIR number in the same district.
+    # Without this, the FIR-number-based case lookup (F4 search, the
+    # charge-sheet draft, the case transfer audit) is ambiguous, and
+    # the IO/PP/SP spend the morning reconciling whose FIR is whose.
+    # C-3 of the v1.1 audit: F3 (CCTNS) is out of scope, so the
+    # application is the source of FIR-number truth; the constraint
+    # is the enforcement.
+    __table_args__ = (
+        UniqueConstraint("fir_no", "district", name="uq_case_fir_no_district"),
+    )
