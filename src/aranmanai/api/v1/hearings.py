@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from aranmanai.api.deps import CurrentUser, DbSession, IoUser, PpUser
@@ -67,29 +66,28 @@ class HearingResponse(BaseModel):
     adjournment_reason: str | None
     caused_by: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
-def _to_response(h: Hearing) -> dict[str, Any]:
-    return {
-        "id": h.id,
-        "case_id": h.case_id,
-        "date": h.date,
-        "docket_label": h.docket_label,
-        "stage": h.stage,
-        "judge_name": h.judge_name,
-        "accused_present": h.accused_present,
-        "pp_present": h.pp_present,
-        "defense_present": h.defense_present,
-        "witness_ids_present": h.witness_ids_present or [],
-        "outcome": h.outcome,
-        "next_action": h.next_action,
-        "next_hearing_date": h.next_hearing_date,
-        "notes": h.notes,
-        "adjournment_reason": h.adjournment_reason,
-        "caused_by": h.caused_by,
-    }
+def _to_response(h: Hearing) -> HearingResponse:
+    return HearingResponse(
+        id=h.id,
+        case_id=h.case_id,
+        date=h.date,
+        docket_label=h.docket_label,
+        stage=h.stage,
+        judge_name=h.judge_name,
+        accused_present=h.accused_present,
+        pp_present=h.pp_present,
+        defense_present=h.defense_present,
+        witness_ids_present=h.witness_ids_present or [],
+        outcome=h.outcome,
+        next_action=h.next_action,
+        next_hearing_date=h.next_hearing_date,
+        notes=h.notes,
+        adjournment_reason=h.adjournment_reason,
+        caused_by=h.caused_by,
+    )
 
 
 @router.post("", response_model=HearingResponse, status_code=status.HTTP_201_CREATED)

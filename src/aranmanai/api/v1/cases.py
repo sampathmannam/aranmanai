@@ -4,10 +4,9 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from aranmanai.api.deps import CurrentUser, DbSession, IoUser, SpUser
@@ -126,34 +125,33 @@ class CaseResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
-def _to_response(c: Case) -> dict[str, Any]:
-    return {
-        "id": c.id,
-        "fir_no": c.fir_no,
-        "district": c.district,
-        "court": c.court,
-        "judge": c.judge,
-        "bns_sections": c.bns_sections or [],
-        "bnss_sections": c.bnss_sections or [],
-        "bsa_sections": c.bsa_sections or [],
-        "facts_text": c.facts_text,
-        "fir_date": c.fir_date,
-        "next_hearing": c.next_hearing,
-        "last_hearing": c.last_hearing,
-        "judgment_date": c.judgment_date,
-        "status": c.status.value,
-        "stage": c.stage.value,
-        "risk_score": c.risk_score,
-        "io_id": c.io_id,
-        "pp_id": c.pp_id,
-        "sp_id": c.sp_id,
-        "created_at": c.created_at,
-        "updated_at": c.updated_at,
-    }
+def _to_response(c: Case) -> CaseResponse:
+    return CaseResponse(
+        id=c.id,
+        fir_no=c.fir_no,
+        district=c.district,
+        court=c.court,
+        judge=c.judge,
+        bns_sections=c.bns_sections or [],
+        bnss_sections=c.bnss_sections or [],
+        bsa_sections=c.bsa_sections or [],
+        facts_text=c.facts_text,
+        fir_date=c.fir_date,
+        next_hearing=c.next_hearing,
+        last_hearing=c.last_hearing,
+        judgment_date=c.judgment_date,
+        status=c.status.value,
+        stage=c.stage.value,
+        risk_score=c.risk_score,
+        io_id=c.io_id,
+        pp_id=c.pp_id,
+        sp_id=c.sp_id,
+        created_at=c.created_at,
+        updated_at=c.updated_at,
+    )
 
 
 @router.post("", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)

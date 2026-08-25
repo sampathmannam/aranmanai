@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
@@ -73,25 +72,25 @@ class WitnessResponse(BaseModel):
     updated_at: datetime
 
 
-def _to_response(w: Witness) -> dict[str, Any]:
-    return {
-        "id": w.id,
-        "case_id": w.case_id,
-        "name": decrypt_field(w.name_encrypted),
-        "contact": decrypt_field(w.contact_encrypted) if w.contact_encrypted else None,
-        "language": w.language,
-        "type": w.type.value,
-        "category": w.category.value,
-        "prep_status": w.prep_status.value,
-        "hostile_reason": w.hostile_reason,
-        "protection_level": w.protection_level,
-        "cross_exam_questions": w.cross_exam_questions or [],
-        "cross_exam_at": w.cross_exam_at,
-        "hearings_attended": w.hearings_attended,
-        "last_contact": w.last_contact,
-        "created_at": w.created_at,
-        "updated_at": w.updated_at,
-    }
+def _to_response(w: Witness) -> WitnessResponse:
+    return WitnessResponse(
+        id=w.id,
+        case_id=w.case_id,
+        name=decrypt_field(w.name_encrypted),
+        contact=decrypt_field(w.contact_encrypted) if w.contact_encrypted else None,
+        language=w.language,
+        type=w.type.value,
+        category=w.category.value,
+        prep_status=w.prep_status.value,
+        hostile_reason=w.hostile_reason,
+        protection_level=w.protection_level,
+        cross_exam_questions=w.cross_exam_questions or [],
+        cross_exam_at=w.cross_exam_at,
+        hearings_attended=w.hearings_attended,
+        last_contact=w.last_contact,
+        created_at=w.created_at,
+        updated_at=w.updated_at,
+    )
 
 
 @router.post("", response_model=WitnessResponse, status_code=status.HTTP_201_CREATED)
@@ -158,9 +157,9 @@ def list_witnesses(
 def categorize_witness(
     witness_id: str,
     category: WitnessCategory,
+    db: DbSession,
+    user: IoUser,
     reason: str | None = None,
-    db: DbSession = None,
-    user: IoUser = None,
 ) -> WitnessResponse:
     svc = WitnessCategorizationService(db)
     w = svc.categorize(witness_id, category, reason=reason)
@@ -178,9 +177,9 @@ def categorize_witness(
 def cross_exam_prep(
     witness_id: str,
     case_facts: str,
+    db: DbSession,
+    user: PpUser,
     language: str = "en",
-    db: DbSession = None,
-    user: PpUser = None,
 ) -> dict:
     svc = WitnessPreparationService(db)
     result = svc.generate_brief(witness_id, case_facts=case_facts, language=language)
@@ -205,9 +204,9 @@ def mark_witness_ready(witness_id: str, db: DbSession, user: PpUser) -> WitnessR
 @router.post("/{witness_id}/testified", response_model=WitnessResponse)
 def mark_witness_testified(
     witness_id: str,
+    db: DbSession,
+    user: PpUser,
     performance_notes: str | None = None,
-    db: DbSession = None,
-    user: PpUser = None,
 ) -> WitnessResponse:
     svc = WitnessPreparationService(db)
     w = svc.mark_testified(witness_id, performance_notes=performance_notes)
