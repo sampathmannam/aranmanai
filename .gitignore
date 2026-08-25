@@ -45,6 +45,9 @@ models/llm/
 # Test artifacts
 .pytest_cache/
 .coverage
+.coverage.*
+.mypy_cache/
+.ruff_cache/
 htmlcov/
 *.log
 
