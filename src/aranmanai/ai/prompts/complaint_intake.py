@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from aranmanai.ai.llm_client import LLMMessage
+from aranmanai.ai.prompts._sanitize import delimit, sanitize_for_llm
+
 
 
 def build_complaint_intake_prompt(
@@ -34,16 +36,16 @@ Output language: {language}"""
 
     complainant_section = ""
     if complainant_name:
-        complainant_section += f"\nCOMPLAINANT NAME: {complainant_name}"
+        complainant_section += f"\nCOMPLAINANT NAME: {delimit(complainant_name, 'COMPLAINANT_NAME').strip()}"
     if complainant_contact:
-        complainant_section += f"\nCOMPLAINANT CONTACT: {complainant_contact}"
+        complainant_section += f"\nCOMPLAINANT CONTACT: {delimit(complainant_contact, 'COMPLAINANT_CONTACT').strip()}"
 
     user = f"""Convert the following free-form complaint into a structured
 complaint record.
 {complainant_section}
 
 RAW COMPLAINT (transcribed from voice or written as text):
-\"\"\"{raw_complaint}\"\"\"
+{delimit(raw_complaint, "RAW_COMPLAINT")}
 
 Produce the structured complaint record now."""
 
@@ -51,3 +53,4 @@ Produce the structured complaint record now."""
         LLMMessage(role="system", content=system),
         LLMMessage(role="user", content=user),
     ]
+

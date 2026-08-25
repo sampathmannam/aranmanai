@@ -40,14 +40,27 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
-    # CORS
+    # CORS - M-1 fix: explicit method list (not ["*"])
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
     )
+
+    # M-5: HSTS for production HTTPS (only applied when env=production)
+    if settings.environment == "production":
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.responses import Response
+
+        class HSTSMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                response = await call_next(request)
+                response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+                return response
+
+        app.add_middleware(HSTSMiddleware)
 
     # Health
     @app.get("/health")
@@ -111,13 +124,17 @@ async def _value_error_handler(request: Request, exc: Exception) -> JSONResponse
 
 async def _generic_500_handler(request: Request, exc: Exception) -> JSONResponse:
     """Last-resort handler. Logs the full traceback server-side, returns a
-    generic 500 to the client. Prevents stack-trace leakage."""
+    generic 500 to the client. Prevents stack-trace leakage.
+
+    L-1 fix: returns a fixed string, no exception type name (which can
+    reveal internal class names).
+    """
     import traceback
     log.error("api.unhandled_500 path=%s err=%s\n%s",
               request.url.path, str(exc)[:200], traceback.format_exc())
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error", "type": type(exc).__name__},
+        content={"detail": "Internal server error"},
     )
 
 

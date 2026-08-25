@@ -37,7 +37,7 @@ from aranmanai.db.models.coordination import (
     SpDailyReview,
 )
 from aranmanai.db.models.hearing import Hearing
-from aranmanai.db.models.user import User
+from aranmanai.db.models.user import User, UserRole
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
@@ -66,6 +66,23 @@ class CmcLoopService:
 
     def __init__(self, db: Session) -> None:
         self.db = db
+
+    def _assert_district_match(self, case_id: str, user_id: str) -> None:
+        """H-2 fix: assert the user is admin or the case is in the user's district.
+
+        Prevents IDOR where an SP in district A reviews cases in district B.
+        """
+        user = self.db.get(User, user_id)
+        if not user or user.role == UserRole.ADMIN:
+            return
+        case = self.db.get(Case, case_id)
+        if not case:
+            return  # 404 handled elsewhere
+        if case.district != user.district:
+            raise ValueError(
+                f"User {user_id} (district={user.district}) cannot access "
+                f"case {case_id} (district={case.district})"
+            )
 
     # ──────────────────────────────────────────────────────────
     # Meeting
@@ -275,7 +292,12 @@ class CmcLoopService:
         status: str = "reviewed",  # reviewed | escalated | cleared
         notes: str | None = None,
     ) -> SpDailyReview:
-        """SP signs off on a case for a given day. Without this, no accountability."""
+        """SP signs off on a case for a given day. Without this, no accountability.
+
+        H-2 fix: enforces district match (admin bypass).
+        """
+        # H-2: district validation
+        self._assert_district_match(case_id, sp_id)
         if not case_id or not case_id.strip():
             raise ValueError("case_id is required")
         if not self.db.get(Case, case_id):
@@ -791,6 +813,10 @@ class CmcLoopService:
 
         Conviction rate = (convicted cases) / (closed cases).
         Closed = cases with an outcome recorded.
+
+        H-2 fix: the district parameter is honored, but admin can
+        request any district by passing the explicit query param.
+        Non-admin callers must pass their own district.
         """
         from aranmanai.db.models.coordination import PilotCase
         from datetime import datetime as _dt

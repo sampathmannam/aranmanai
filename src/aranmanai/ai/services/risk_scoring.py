@@ -23,13 +23,24 @@ VALID_FSL_STATUS = ("not_sent", "in_queue", "returned", "overdue", "sent")
 class RiskScoreRequest(BaseModel):
     case_id: str = Field(..., min_length=1, max_length=36)
     case_facts: str = Field(..., min_length=1)
-    lapses: list[dict] = Field(default_factory=list)
+    lapses: list[dict] = Field(default_factory=list, max_length=50)
     evidence_strength: Literal["STRONG", "MEDIUM", "WEAK"] = "MEDIUM"
     witness_count: int = Field(0, ge=0)
     hostile_witness_count: int = Field(0, ge=0)
     fsl_status: Literal["not_sent", "in_queue", "returned", "overdue", "sent"] = "not_sent"
     bnss_173_compliant: bool = False
     language: str = "en"
+
+    @field_validator("lapses")
+    @classmethod
+    def _lapses_size(cls, v):
+        # M-4 fix: cap per-element description to prevent prompt-injection
+        # payloads and to keep total prompt size bounded
+        for l in v:
+            desc = l.get("description", "")
+            if isinstance(desc, str) and len(desc) > 1000:
+                l["description"] = desc[:1000]
+        return v
 
     @field_validator("hostile_witness_count")
     @classmethod

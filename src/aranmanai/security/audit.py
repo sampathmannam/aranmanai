@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
@@ -28,6 +30,13 @@ from typing import Any
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
+
+# C-4 fix: in-process thread lock to serialise appends.
+# Prevents the "two threads read the same _last_hash, both write
+# with the same prev_hash" race. For multi-process deployments,
+# migrate to SQLite (atomic writes via row-level locking) - the chain
+# logic stays the same.
+_audit_lock = threading.Lock()
 
 # Genesis hash — the prev_hash of the very first audit entry.
 # Doesn't need to be secret; just a stable starting point.
@@ -126,26 +135,34 @@ class AuditLog:
         error: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        """Append a new entry. Returns the new entry's log_id."""
-        log_id = str(uuid.uuid4())
-        ts = datetime.now(timezone.utc).isoformat()
-        entry_core: dict[str, Any] = {
-            "log_id": log_id,
-            "timestamp": ts,
-            "actor_id": actor_id,
-            "action": action.value,
-            "subject_id": subject_id,
-            "fields_used": fields_used or [],
-            "success": success,
-            "error": error,
-            "metadata": metadata or {},
-        }
-        new_hash = _hash_entry(self._last_hash, entry_core)
-        full_entry = {**entry_core, "prev_hash": self._last_hash, "hash": new_hash}
+        """Append a new entry. Returns the new entry's log_id.
 
-        with self.log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(full_entry, default=str) + "\n")
-        self._last_hash = new_hash
+        C-4 fix: held under _audit_lock to serialise concurrent appends
+        from multiple threads. For multi-process deployments, migrate
+        to SQLite (the chain logic is unchanged).
+        """
+        with _audit_lock:
+            log_id = str(uuid.uuid4())
+            ts = datetime.now(timezone.utc).isoformat()
+            entry_core: dict[str, Any] = {
+                "log_id": log_id,
+                "timestamp": ts,
+                "actor_id": actor_id,
+                "action": action.value,
+                "subject_id": subject_id,
+                "fields_used": fields_used or [],
+                "success": success,
+                "error": error,
+                "metadata": metadata or {},
+            }
+            new_hash = _hash_entry(self._last_hash, entry_core)
+            full_entry = {**entry_core, "prev_hash": self._last_hash, "hash": new_hash}
+
+            with self.log_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(full_entry, default=str) + "\n")
+                f.flush()
+                os.fsync(f.fileno())  # M-3 partial: durability of the fsync
+            self._last_hash = new_hash
         log.info(
             "audit.appended",
             log_id=log_id,

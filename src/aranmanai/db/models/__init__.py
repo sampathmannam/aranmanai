@@ -18,6 +18,11 @@ from aranmanai.db.models.coordination import (
     CourtConstablePerformance,
     PpAnswer,
 )
+from aranmanai.db.models.safety import (
+    HelplineCall,
+    AnonymousReport,
+    PatrolDispatch,
+)
 
 __all__ = [
     "Case", "CaseStatus", "CaseStage",
@@ -37,4 +42,7 @@ __all__ = [
     "Escalation", "EscalationStatus",
     "CourtConstablePerformance",
     "PpAnswer",
+    "HelplineCall",
+    "AnonymousReport",
+    "PatrolDispatch",
 ]
