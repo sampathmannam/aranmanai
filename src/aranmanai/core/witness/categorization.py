@@ -7,8 +7,8 @@ Each category drives different prep:
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session

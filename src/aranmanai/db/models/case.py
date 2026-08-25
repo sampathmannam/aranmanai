@@ -12,11 +12,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from aranmanai.db.session import Base
 
 if TYPE_CHECKING:
+    from aranmanai.db.models.coordination import CoordinationNote
+    from aranmanai.db.models.evidence import Evidence
+    from aranmanai.db.models.hearing import Hearing
     from aranmanai.db.models.user import User
     from aranmanai.db.models.witness import Witness
-    from aranmanai.db.models.hearing import Hearing
-    from aranmanai.db.models.evidence import Evidence
-    from aranmanai.db.models.coordination import ActionItem, CMCMeeting, CoordinationNote
 
 
 class CaseStatus(str, enum.Enum):
@@ -132,19 +132,19 @@ class Case(Base):
     )
 
     # Relationships
-    io: Mapped["User | None"] = relationship("User", foreign_keys=[io_id], lazy="joined")
-    pp: Mapped["User | None"] = relationship("User", foreign_keys=[pp_id], lazy="joined")
-    sp: Mapped["User | None"] = relationship("User", foreign_keys=[sp_id], lazy="joined")
-    witnesses: Mapped[list["Witness"]] = relationship(
+    io: Mapped[User | None] = relationship("User", foreign_keys=[io_id], lazy="joined")
+    pp: Mapped[User | None] = relationship("User", foreign_keys=[pp_id], lazy="joined")
+    sp: Mapped[User | None] = relationship("User", foreign_keys=[sp_id], lazy="joined")
+    witnesses: Mapped[list[Witness]] = relationship(
         "Witness", back_populates="case", cascade="all, delete-orphan", lazy="selectin"
     )
-    hearings: Mapped[list["Hearing"]] = relationship(
+    hearings: Mapped[list[Hearing]] = relationship(
         "Hearing", back_populates="case", cascade="all, delete-orphan", lazy="selectin"
     )
-    evidence: Mapped[list["Evidence"]] = relationship(
+    evidence: Mapped[list[Evidence]] = relationship(
         "Evidence", back_populates="case", cascade="all, delete-orphan", lazy="selectin"
     )
-    coordination_notes: Mapped[list["CoordinationNote"]] = relationship(
+    coordination_notes: Mapped[list[CoordinationNote]] = relationship(
         "CoordinationNote", back_populates="case", cascade="all, delete-orphan", lazy="selectin"
     )
 

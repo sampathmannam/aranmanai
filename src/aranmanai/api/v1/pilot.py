@@ -2,16 +2,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from aranmanai.ai.services.pilot_tracker import PilotTrackerService
-from aranmanai.api.deps import CurrentUser, DbSession, SpUser
+from aranmanai.api.deps import DbSession, SpUser
+from aranmanai.config import get_settings
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog
-from aranmanai.config import get_settings
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/pilot", tags=["pilot"])
@@ -25,12 +24,12 @@ def _audit() -> AuditLog:
 
 class PilotEnrollRequest(BaseModel):
     case_id: str
-    baseline_p_conviction: Optional[float] = None
-    baseline_offence: Optional[str] = None
-    baseline_court: Optional[str] = None
-    baseline_lapse_count: Optional[int] = None
-    baseline_fatal_lapse_count: Optional[int] = None
-    notes: Optional[str] = None
+    baseline_p_conviction: float | None = None
+    baseline_offence: str | None = None
+    baseline_court: str | None = None
+    baseline_lapse_count: int | None = None
+    baseline_fatal_lapse_count: int | None = None
+    notes: str | None = None
 
 
 class PilotCureRequest(BaseModel):
@@ -39,18 +38,18 @@ class PilotCureRequest(BaseModel):
 
 
 class PilotMidReviewRequest(BaseModel):
-    post_p_conviction: Optional[float] = None
-    post_lapse_count: Optional[int] = None
-    post_fatal_lapse_count: Optional[int] = None
-    post_hostile_witnesses: Optional[int] = None
-    notes: Optional[str] = None
+    post_p_conviction: float | None = None
+    post_lapse_count: int | None = None
+    post_fatal_lapse_count: int | None = None
+    post_hostile_witnesses: int | None = None
+    notes: str | None = None
 
 
 class PilotCloseRequest(BaseModel):
     outcome: str  # convicted | acquitted | compromised | pending
-    outcome_date: Optional[str] = None
-    sentence: Optional[str] = None
-    notes: Optional[str] = None
+    outcome_date: str | None = None
+    sentence: str | None = None
+    notes: str | None = None
 
 
 class PilotMetricsResponse(BaseModel):
@@ -60,11 +59,11 @@ class PilotMetricsResponse(BaseModel):
     n_convicted: int
     n_acquitted: int
     n_compromised: int
-    conviction_rate: Optional[float]
-    conviction_rate_baseline: Optional[float]
-    delta_conviction_rate: Optional[float]
-    delta_p_conviction_avg: Optional[float]
-    hostile_reduction_avg: Optional[float]
+    conviction_rate: float | None
+    conviction_rate_baseline: float | None
+    delta_conviction_rate: float | None
+    delta_p_conviction_avg: float | None
+    hostile_reduction_avg: float | None
     cases: list[dict]
 
 
@@ -87,7 +86,7 @@ def enroll_case(req: PilotEnrollRequest, user: SpUser, db: DbSession) -> dict:
             notes=req.notes,
         )
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
     _audit().append(
         AuditAction.CREATE_WITNESS,  # reuse — no specific enum
@@ -106,7 +105,7 @@ def apply_cure(pilot_case_id: str, req: PilotCureRequest, user: SpUser, db: DbSe
     try:
         pc = svc.apply_cure(pilot_case_id, req.lapse_key, req.cure_action)
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     return {"status": "ok", "pilot_case_id": pc.id, "n_cures": len(pc.cures_applied)}
 
 
@@ -124,7 +123,7 @@ def mid_review(pilot_case_id: str, req: PilotMidReviewRequest, user: SpUser, db:
             notes=req.notes,
         )
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     return {"status": "ok", "pilot_case_id": pc.id, "mid_review_at": pc.mid_review_at.isoformat()}
 
 
@@ -142,12 +141,12 @@ def close_case(pilot_case_id: str, req: PilotCloseRequest, user: SpUser, db: DbS
             notes=req.notes,
         )
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     return {"status": "closed", "pilot_case_id": pc.id, "outcome": pc.outcome}
 
 
 @router.get("/metrics", response_model=PilotMetricsResponse)
-def get_metrics(user: SpUser, db: DbSession, district: Optional[str] = None) -> PilotMetricsResponse:
+def get_metrics(user: SpUser, db: DbSession, district: str | None = None) -> PilotMetricsResponse:
     """Get aggregate pilot metrics for the district (or all if admin)."""
     svc = PilotTrackerService(db)
     m = svc.get_metrics(district=district or user.district)

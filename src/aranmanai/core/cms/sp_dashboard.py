@@ -11,13 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import case as sql_case, func, select
+from sqlalchemy import case as sql_case
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from aranmanai.core.cms.bottleneck import BottleneckDetector
 from aranmanai.core.cms.daily_calendar import DailyCalendarService
 from aranmanai.db.models.case import Case, CaseStatus
-from aranmanai.db.models.hearing import Hearing
 from aranmanai.db.models.witness import Witness, WitnessCategory
 from aranmanai.observability import get_logger
 

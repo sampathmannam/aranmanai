@@ -27,14 +27,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from aranmanai.api.deps import CurrentUser, DbSession
-from aranmanai.db.models.audit_log import AuditLogEntry
+from aranmanai.config import get_settings
 from aranmanai.db.models.case import Case
-from aranmanai.db.models.coordination import Alert, CoordinationNote, DailyCaseReview, WitnessProduction
+from aranmanai.db.models.coordination import CoordinationNote, DailyCaseReview
 from aranmanai.db.models.user import User
-from aranmanai.db.models.witness import Witness
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog
-from aranmanai.config import get_settings
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/dpdp", tags=["dpdp"])

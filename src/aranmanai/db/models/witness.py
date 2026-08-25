@@ -95,7 +95,7 @@ class Witness(Base):
     )
 
     # Relationships
-    case: Mapped["Case"] = relationship("Case", back_populates="witnesses", lazy="joined")
+    case: Mapped[Case] = relationship("Case", back_populates="witnesses", lazy="joined")
 
     def __repr__(self) -> str:
         return f"<Witness {self.id[:8]} type={self.type.value} category={self.category.value}>"

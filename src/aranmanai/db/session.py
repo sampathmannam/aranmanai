@@ -1,8 +1,8 @@
 """SQLAlchemy engine + session management for SQLCipher-encrypted SQLite."""
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Generator
+from collections.abc import Generator
+from contextlib import contextmanager, suppress
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
@@ -143,9 +143,7 @@ def reset_engine() -> None:
     """
     global _engine, _SessionLocal
     if _engine is not None:
-        try:
+        with suppress(Exception):
             _engine.dispose()
-        except Exception:
-            pass
     _engine = None
     _SessionLocal = None

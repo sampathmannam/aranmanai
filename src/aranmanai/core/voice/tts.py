@@ -10,11 +10,7 @@ Tamil voice if installed).
 """
 from __future__ import annotations
 
-import io
-import os
-import tempfile
 from pathlib import Path
-from typing import Optional, Union
 
 from aranmanai.observability import get_logger
 
@@ -30,7 +26,7 @@ class TextToSpeech:
         tts.to_file("summary.wav", "First hearing on 2026-09-15.")
     """
 
-    def __init__(self, rate: int = 175, voice_id: Optional[str] = None):
+    def __init__(self, rate: int = 175, voice_id: str | None = None):
         self.rate = rate
         self.voice_id = voice_id
         self._engine = None
@@ -43,7 +39,7 @@ class TextToSpeech:
                 raise RuntimeError(
                     "pyttsx3 not installed. Install: pip install pyttsx3==2.90"
                 ) from e
-            self._engine = pyttsx2_engine = pyttsx2_engine = None
+            self._engine = None
             try:
                 self._engine = pyttsx3.init()
             except Exception as e:
@@ -76,7 +72,7 @@ class TextToSpeech:
         engine.runAndWait()
         log.debug("tts.spoke text=%r", text[:80])
 
-    def to_file(self, output_path: Union[str, Path], text: str) -> Path:
+    def to_file(self, output_path: str | Path, text: str) -> Path:
         """Synthesize to a WAV file. Returns the output path."""
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)

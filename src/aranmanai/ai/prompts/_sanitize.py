@@ -7,8 +7,6 @@ AI services.
 from __future__ import annotations
 
 import re
-from typing import Any
-
 
 # Characters that often appear in prompt-injection payloads
 _INJECTION_PATTERNS = [

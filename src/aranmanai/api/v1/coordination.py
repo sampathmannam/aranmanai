@@ -17,15 +17,13 @@ Endpoints:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from aranmanai.api.deps import CurrentUser, DbSession
 from aranmanai.config import get_settings
-from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+from aranmanai.db.models.case import Case, CaseStage, CaseStatus
 from aranmanai.db.models.hearing import Hearing
 from aranmanai.db.models.witness import Witness, WitnessPrepStatus
 from aranmanai.observability import get_logger
@@ -49,7 +47,7 @@ class DailyReviewWitness(BaseModel):
     # Per-hearing production status (for THIS hearing)
     production_status: str = "unknown"  # "unknown" | "confirmed" | "uncertain" | "no_show" | "appeared"
     transport_arranged: bool = False
-    last_contact: Optional[str] = None
+    last_contact: str | None = None
     needs_call: bool = False  # SP/IO should call this witness before tomorrow
 
 
@@ -59,16 +57,16 @@ class DailyReviewHearing(BaseModel):
     case_id: str
     fir_no: str
     sections: list[str]
-    court: Optional[str]
-    judge: Optional[str]
+    court: str | None
+    judge: str | None
     date: str  # ISO format
     stage: str
 
     # Coordination status (the CMC's main value: who has confirmed)
-    accused_present: Optional[bool] = None
-    pp_present: Optional[bool] = None
-    defense_present: Optional[bool] = None
-    judge_name: Optional[str] = None
+    accused_present: bool | None = None
+    pp_present: bool | None = None
+    defense_present: bool | None = None
+    judge_name: str | None = None
 
     # Witnesses — per-witness production status
     witnesses: list[DailyReviewWitness]
@@ -101,7 +99,7 @@ class DailyReviewResponse(BaseModel):
 
 @router.get("/daily-review", response_model=DailyReviewResponse)
 def get_daily_review(
-    target_date: Optional[str] = None,  # YYYY-MM-DD, default = today
+    target_date: str | None = None,  # YYYY-MM-DD, default = today
     user: CurrentUser = None,
     db: DbSession = None,
 ) -> DailyReviewResponse:
@@ -117,11 +115,10 @@ def get_daily_review(
     if not target_date:
         target_date = datetime.utcnow().date().isoformat()
 
-    settings = get_settings()
     district = user.district
 
     # All hearings for this district on this date
-    from sqlalchemy import and_, func
+    from sqlalchemy import func
     target_day = datetime.fromisoformat(target_date)
     hearings = (
         db.query(Hearing)
@@ -163,12 +160,13 @@ def get_daily_review(
             if w.last_contact:
                 days_since = (datetime.utcnow() - w.last_contact).days
             # Uncontacted in 7 days AND not yet ready = need to call
-            if w.prep_status not in (WitnessPrepStatus.READY, WitnessPrepStatus.TESTIFIED):
-                if days_since is None or days_since >= 7:
-                    needs_call_flag = True
-                    need_call += 1
-                    if days_since is None:
-                        uncontacted += 1
+            if w.prep_status not in (
+                WitnessPrepStatus.READY, WitnessPrepStatus.TESTIFIED,
+            ) and (days_since is None or days_since >= 7):
+                needs_call_flag = True
+                need_call += 1
+                if days_since is None:
+                    uncontacted += 1
             if w.category.value == "hostile":
                 hostile += 1
             if w.prep_status == WitnessPrepStatus.READY:
@@ -274,15 +272,15 @@ class WitnessProductionStatus(BaseModel):
     witness_id: str
     production_status: str  # "unknown" | "confirmed" | "uncertain" | "no_show" | "appeared"
     transport_arranged: bool = False
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class HearingCoordinationUpdate(BaseModel):
     """Per-hearing coordination status update by IO/PP/constable."""
-    pp_present: Optional[bool] = None
-    defense_present: Optional[bool] = None
-    accused_present: Optional[bool] = None
-    judge_name: Optional[str] = None
+    pp_present: bool | None = None
+    defense_present: bool | None = None
+    accused_present: bool | None = None
+    judge_name: str | None = None
     witness_production: list[WitnessProductionStatus] = Field(default_factory=list)
 
 
@@ -363,10 +361,10 @@ def update_hearing_coordination(
 
 class HearingOutcomeRequest(BaseModel):
     outcome: str  # "adjourned" | "argued" | "evidence_recorded" | "judgment" | "withdrawn"
-    next_hearing_date: Optional[str] = None
-    adjournment_reason: Optional[str] = None
+    next_hearing_date: str | None = None
+    adjournment_reason: str | None = None
     caused_by: str = "none"  # "none" | "witness" | "pp" | "defense" | "accused" | "judge"
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 @router.patch("/hearing/{hearing_id}/outcome")

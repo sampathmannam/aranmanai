@@ -94,6 +94,14 @@ target-version = "py311"
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 ignore = ["E501", "B008"]
 
+[tool.ruff.lint.per-file-ignores]
+# Standalone scripts (and the Streamlit frontend entrypoint) insert the repo
+# root onto sys.path before importing aranmanai.* so they work when run
+# directly (not via the installed package) -- the import can't move above
+# the sys.path.insert() that makes it resolvable.
+"scripts/*.py" = ["E402"]
+"src/aranmanai/frontend/app.py" = ["E402"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

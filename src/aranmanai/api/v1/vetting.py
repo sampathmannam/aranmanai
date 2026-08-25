@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from aranmanai.ai.services.chargesheet_vetting import ChargesheetVettingService
-from aranmanai.api.deps import CurrentUser, DbSession, IoUser
+from aranmanai.api.deps import DbSession, IoUser
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
@@ -53,7 +53,7 @@ def vet_chargesheet(case_id: str, user: IoUser, db: DbSession) -> VettingReportR
     try:
         report = svc.vet(case_id)
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     return VettingReportResponse(
         case_id=report.case_id,
         fir_no=report.fir_no,

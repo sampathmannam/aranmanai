@@ -48,10 +48,10 @@ class User(Base):
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
-    cases_as_io: Mapped[list["Case"]] = relationship(
+    cases_as_io: Mapped[list[Case]] = relationship(
         "Case", foreign_keys="Case.io_id", back_populates="io"
     )
-    cases_as_pp: Mapped[list["Case"]] = relationship(
+    cases_as_pp: Mapped[list[Case]] = relationship(
         "Case", foreign_keys="Case.pp_id", back_populates="pp"
     )
 

@@ -49,11 +49,11 @@ Output language: {language}"""
     # H-1: sanitize lapse descriptions (key + description) per item
     safe_lapses = [
         {
-            "tier": l.get("tier", "UNKNOWN"),
-            "key": sanitize_for_llm(str(l.get("key", "?")), 200),
-            "description": sanitize_for_llm(str(l.get("description", "")), 1000),
+            "tier": lapse.get("tier", "UNKNOWN"),
+            "key": sanitize_for_llm(str(lapse.get("key", "?")), 200),
+            "description": sanitize_for_llm(str(lapse.get("description", "")), 1000),
         }
-        for l in (lapses or [])
+        for lapse in (lapses or [])
     ]
     lapse_section = "\n".join(
         f"- [{item['tier']}] {item['key']}: {item['description']}"

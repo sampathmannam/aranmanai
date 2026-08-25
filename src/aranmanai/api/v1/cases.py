@@ -9,14 +9,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from aranmanai.api.deps import CurrentUser, DbSession, IoUser, SpUser
+from aranmanai.config import get_settings
 from aranmanai.db.models.case import Case, CaseStage, CaseStatus
 from aranmanai.observability import get_logger
-from aranmanai.security import AuditAction, AuditLog, encrypt_field
-from aranmanai.config import get_settings
-
+from aranmanai.security import AuditAction, AuditLog
 
 # v1.1 Kishore review item 5: FIR-number normalizer.
 # Defends the UNIQUE(fir_no, district) constraint from typo-collision:

@@ -15,16 +15,13 @@ the audit log can record the exact bytes that were transcribed.
 from __future__ import annotations
 
 import hashlib
-import io
-import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
 
 import numpy as np
 
 from aranmanai.core.voice.stt import SpeechToText, TranscriptionResult
-from aranmanai.core.voice.vad import VoiceActivityDetector, detect_speech_segments, load_wav
+from aranmanai.core.voice.vad import VoiceActivityDetector, load_wav
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
@@ -47,17 +44,17 @@ class VoicePipeline:
 
     def __init__(
         self,
-        stt_model_size: Optional[str] = None,
+        stt_model_size: str | None = None,
         vad_threshold: float = 0.5,
-        device: Optional[str] = None,
+        device: str | None = None,
     ):
         self.stt = SpeechToText(model_size=stt_model_size, device=device)
         self.vad = VoiceActivityDetector(threshold=vad_threshold)
 
     def transcribe_file(
         self,
-        path: Union[str, Path],
-        language: Optional[str] = None,
+        path: str | Path,
+        language: str | None = None,
     ) -> PipelineResult:
         """VAD + STT on a WAV file."""
         path = Path(path)
@@ -70,7 +67,7 @@ class VoicePipeline:
         self,
         audio: np.ndarray,
         sample_rate: int = 16000,
-        language: Optional[str] = None,
+        language: str | None = None,
     ) -> PipelineResult:
         """VAD + STT on a numpy array."""
         # Hash the audio
@@ -83,7 +80,7 @@ class VoicePipeline:
         audio: np.ndarray,
         sample_rate: int,
         audio_hash: str,
-        language: Optional[str],
+        language: str | None,
     ) -> PipelineResult:
         # 1. VAD segments
         segments = self.vad.detect(audio, sample_rate)
@@ -136,9 +133,9 @@ class VoicePipeline:
 
 
 def voice_to_text(
-    path: Union[str, Path],
-    language: Optional[str] = None,
-    model_size: Optional[str] = None,
+    path: str | Path,
+    language: str | None = None,
+    model_size: str | None = None,
 ) -> PipelineResult:
     """Convenience: load file, VAD, STT, return joined text."""
     return VoicePipeline(stt_model_size=model_size).transcribe_file(path, language)

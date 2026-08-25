@@ -5,7 +5,8 @@ Cases stuck at a stage > threshold days are flagged.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,7 +39,7 @@ class BottleneckDetector:
     - alarm: 180 days
     """
 
-    DEFAULT_THRESHOLDS = {
+    DEFAULT_THRESHOLDS: ClassVar[dict[str, int]] = {
         "warning": 30,
         "critical": 90,
         "alarm": 180,

@@ -17,7 +17,7 @@ This service implements that loop:
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -575,21 +575,22 @@ class CmcLoopService:
         perf.on_time_pct = on_time_pct
 
         # Auto-flag excellence: >90% production rate AND >80% on-time
-        if production_rate >= 0.9 and on_time_pct >= 0.8 and hearings_attended >= 5:
-            if not perf.excellence_flag:
-                perf.excellence_flag = True
-                perf.excellence_reason = (
-                    f"Auto-flagged: {production_rate:.0%} witness production, "
-                    f"{on_time_pct:.0%} on-time over {hearings_attended} hearings"
-                )
+        if (
+            production_rate >= 0.9 and on_time_pct >= 0.8 and hearings_attended >= 5
+            and not perf.excellence_flag
+        ):
+            perf.excellence_flag = True
+            perf.excellence_reason = (
+                f"Auto-flagged: {production_rate:.0%} witness production, "
+                f"{on_time_pct:.0%} on-time over {hearings_attended} hearings"
+            )
 
         # Auto-flag negligence: <50% production rate OR multiple missed hearings
-        if hearings_attended >= 5 and production_rate < 0.5:
-            if not perf.negligence_flag:
-                perf.negligence_flag = True
-                perf.negligence_reason = (
-                    f"Auto-flagged: {production_rate:.0%} production rate"
-                )
+        if hearings_attended >= 5 and production_rate < 0.5 and not perf.negligence_flag:
+            perf.negligence_flag = True
+            perf.negligence_reason = (
+                f"Auto-flagged: {production_rate:.0%} production rate"
+            )
 
         self.db.commit()
         self.db.refresh(perf)
@@ -818,8 +819,8 @@ class CmcLoopService:
         request any district by passing the explicit query param.
         Non-admin callers must pass their own district.
         """
+
         from aranmanai.db.models.coordination import PilotCase
-        from datetime import datetime as _dt
 
         q = self.db.query(PilotCase)
         if district:

@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from aranmanai.ai.llm_client import LLMMessage
-from aranmanai.ai.prompts._sanitize import delimit, sanitize_for_llm
-
 
 
 def build_investigation_prompt(
@@ -38,8 +36,8 @@ Rules:
 Output language: {language}"""
 
     lapse_section = "\n".join(
-        f"- [{l.get('tier', 'UNKNOWN')}] {l.get('key', '?')}: {l.get('description', '')}"
-        for l in lapses
+        f"- [{lapse.get('tier', 'UNKNOWN')}] {lapse.get('key', '?')}: {lapse.get('description', '')}"
+        for lapse in lapses
     )
     if not lapse_section:
         lapse_section = "(no lapses detected)"

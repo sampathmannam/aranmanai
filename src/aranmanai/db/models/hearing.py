@@ -50,7 +50,7 @@ class Hearing(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    case: Mapped["Case"] = relationship("Case", back_populates="hearings", lazy="joined")
+    case: Mapped[Case] = relationship("Case", back_populates="hearings", lazy="joined")
 
     def __repr__(self) -> str:
         return f"<Hearing {self.date} case={self.case_id[:8]} outcome={self.outcome}>"

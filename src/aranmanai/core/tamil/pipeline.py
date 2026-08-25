@@ -12,13 +12,10 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
-
-import numpy as np
 
 from aranmanai.core.tamil.detect import detect_language
-from aranmanai.core.tamil.embeddings import TextEmbedder, Embedding
-from aranmanai.core.tamil.translator import Translator, TranslationResult
+from aranmanai.core.tamil.embeddings import Embedding, TextEmbedder
+from aranmanai.core.tamil.translator import TranslationResult, Translator
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
@@ -30,9 +27,9 @@ class TamilPipelineResult:
     source_text: str
     source_lang: str
     source_confidence: float
-    translated_text: Optional[str]
-    translation: Optional[TranslationResult]
-    embedding: Optional[Embedding]
+    translated_text: str | None
+    translation: TranslationResult | None
+    embedding: Embedding | None
 
 
 class TamilPipeline:
@@ -45,7 +42,7 @@ class TamilPipeline:
     def process(
         self,
         text: str,
-        target_lang: Optional[str] = "en",
+        target_lang: str | None = "en",
         translate: bool = True,
         embed: bool = True,
     ) -> TamilPipelineResult:

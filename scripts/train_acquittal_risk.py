@@ -26,11 +26,11 @@ Synthetic features (ground truth: based on BPRD acquittal data):
 Synthetic generation rationale:
 - Evidence STRONG + 0 fatal lapses + 0% hostile -> ~8% acquittal
 - Evidence WEAK + ≥1 fatal lapse + ≥60% hostile -> ~75% acquittal
-- Linear interpolation between poles with Gaussian noise (σ=0.08)
+- Linear interpolation between poles with Gaussian noise (sigma=0.08)
 """
 from __future__ import annotations
 
-import os
+import importlib.util
 import sys
 import uuid
 from pathlib import Path
@@ -91,7 +91,7 @@ def _p_acquittal(
     )
     p += offence_risk
 
-    # Gaussian noise (σ=0.08)
+    # Gaussian noise (sigma=0.08)
     rng = np.random.default_rng(RANDOM_SEED)
     p += rng.normal(0, 0.08, size=p.shape)
 
@@ -178,8 +178,8 @@ def train(df: pd.DataFrame) -> dict:
         sys.exit(1)
 
     try:
+        from sklearn.metrics import brier_score_loss, roc_auc_score
         from sklearn.model_selection import train_test_split
-        from sklearn.metrics import roc_auc_score, brier_score_loss, classification_report
     except ImportError:
         print("ERROR: scikit-learn not installed.")
         sys.exit(1)
@@ -233,7 +233,7 @@ def train(df: pd.DataFrame) -> dict:
     calibrated_brier = brier_score_loss(y_test, calibrated)
 
     print(f"\n{'='*50}")
-    print(f"LightGBM Training Complete")
+    print("LightGBM Training Complete")
     print(f"  AUC-ROC:     {auc:.4f}")
     print(f"  Brier score: {brier:.4f}")
     print(f"  Calibrated Brier: {calibrated_brier:.4f}")
@@ -241,11 +241,11 @@ def train(df: pd.DataFrame) -> dict:
     print(f"  n_test:      {len(X_test)}")
     print(f"  Acquittal rate (train): {y_train.mean():.1%}")
     print(f"  Acquittal rate (test):  {y_test.mean():.1%}")
-    print(f"  Target AUC:   >=0.70")
+    print("  Target AUC:   >=0.70")
     print(f"  Status:       {'PASS' if auc >= 0.70 else 'BELOW TARGET'}")
 
     # Feature importance
-    print(f"\nTop features:")
+    print("\nTop features:")
     importance = pd.DataFrame({
         "feature": FEATURE_COLS,
         "importance": model.feature_importance(),
@@ -275,9 +275,7 @@ def save_model(model, output_path: Path, output_onnx: Path) -> None:
     print(f"  Saved: {output_path}")
 
     # Export ONNX
-    try:
-        import lightgbm_skl2onnx
-    except ImportError:
+    if importlib.util.find_spec("lightgbm_skl2onnx") is None:
         print("  ONNX export skipped (lightgbm-skl2onnx not installed)")
         return
 
@@ -302,7 +300,7 @@ def main() -> None:
     print(f"Generating {args.n} synthetic training samples...")
     df = generate_synthetic(n=args.n)
 
-    print(f"Training LightGBM model...")
+    print("Training LightGBM model...")
     result = train(df)
 
     if args.test:

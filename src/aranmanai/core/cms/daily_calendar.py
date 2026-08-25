@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from aranmanai.db.models.case import Case, CaseStatus
 from aranmanai.db.models.hearing import Hearing
-from aranmanai.db.models.witness import Witness, WitnessCategory
+from aranmanai.db.models.witness import WitnessCategory
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
@@ -84,13 +84,9 @@ class DailyCalendarService:
         # Priority heuristic: critical if hostile > 0 AND prepared < hostile
         # OR risk_score is high
         risk = case.risk_score
-        if risk is not None and risk >= 0.7:
+        if risk is not None and risk >= 0.7 or hostile_w > 0 and prepared_w < hostile_w:
             priority = "critical"
-        elif hostile_w > 0 and prepared_w < hostile_w:
-            priority = "critical"
-        elif risk is not None and risk >= 0.5:
-            priority = "high"
-        elif hostile_w > 0:
+        elif risk is not None and risk >= 0.5 or hostile_w > 0:
             priority = "high"
         elif hearing.outcome is None:
             priority = "normal"

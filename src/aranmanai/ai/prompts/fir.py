@@ -6,8 +6,6 @@ Prompt designed for: Qwen2.5 / Phi-3.5 / similar instruction-tuned 1.5-3.8B mode
 from __future__ import annotations
 
 from aranmanai.ai.llm_client import LLMMessage
-from aranmanai.ai.prompts._sanitize import delimit, sanitize_for_llm
-
 
 
 def build_fir_prompt(

@@ -9,10 +9,10 @@ For v1, supports Tamil (ta), English (en), Hindi (hi) with these components:
 
 All local. No cloud calls. DPDP §8(3) audit on every translation.
 """
-from aranmanai.core.tamil.detect import detect_language, detect_script, LANGUAGE_NAMES
-from aranmanai.core.tamil.translator import Translator, translate, batch_translate, TranslationResult
-from aranmanai.core.tamil.embeddings import TextEmbedder, embed_text, embed_batch, Embedding
+from aranmanai.core.tamil.detect import LANGUAGE_NAMES, detect_language, detect_script
+from aranmanai.core.tamil.embeddings import Embedding, TextEmbedder, embed_batch, embed_text
 from aranmanai.core.tamil.pipeline import TamilPipeline, TamilPipelineResult
+from aranmanai.core.tamil.translator import TranslationResult, Translator, batch_translate, translate
 
 __all__ = [
     "detect_language",

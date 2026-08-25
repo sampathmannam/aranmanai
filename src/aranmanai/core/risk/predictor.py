@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from aranmanai.core.risk.features import FeatureVector, get_feature_cols
+from aranmanai.core.risk.features import FeatureVector
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)

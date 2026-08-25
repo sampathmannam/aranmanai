@@ -12,7 +12,7 @@ import io
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import ClassVar, Literal
 
 import numpy as np
 
@@ -71,13 +71,13 @@ class SpeechToText:
         print(result.text)
     """
 
-    _MODELS: dict[str, object] = {}  # shared cache
+    _MODELS: ClassVar[dict[str, object]] = {}  # shared cache
 
     def __init__(
         self,
-        model_size: Optional[str] = None,  # defaults to settings.whisper_model
-        device: Optional[Literal["cpu", "cuda", "auto"]] = None,
-        compute_type: Optional[str] = None,  # "int8", "float16", "float32"
+        model_size: str | None = None,  # defaults to settings.whisper_model
+        device: Literal["cpu", "cuda", "auto"] | None = None,
+        compute_type: str | None = None,  # "int8", "float16", "float32"
     ):
         s = get_settings()
         self.model_size = model_size or s.whisper_model
@@ -113,8 +113,8 @@ class SpeechToText:
 
     def transcribe_file(
         self,
-        path: Union[str, Path],
-        language: Optional[str] = None,  # "ta" / "en" / "hi" / None=auto-detect
+        path: str | Path,
+        language: str | None = None,  # "ta" / "en" / "hi" / None=auto-detect
         beam_size: int = 5,
         vad_filter: bool = True,
     ) -> TranscriptionResult:
@@ -161,7 +161,7 @@ class SpeechToText:
         self,
         audio: np.ndarray,
         sample_rate: int = 16000,
-        language: Optional[str] = None,
+        language: str | None = None,
     ) -> TranscriptionResult:
         """Transcribe a numpy array (mono float32, [-1, 1])."""
         self._load()
@@ -210,9 +210,9 @@ class SpeechToText:
 
 
 def transcribe_wav(
-    path: Union[str, Path],
-    language: Optional[str] = None,
-    model_size: Optional[str] = None,
+    path: str | Path,
+    language: str | None = None,
+    model_size: str | None = None,
 ) -> TranscriptionResult:
     """Convenience: transcribe a WAV with default settings."""
     return SpeechToText(model_size=model_size).transcribe_file(path, language=language)

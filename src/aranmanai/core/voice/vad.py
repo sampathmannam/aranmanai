@@ -8,11 +8,9 @@ API: see detect_speech_segments(audio, sample_rate) -> list[Segment].
 """
 from __future__ import annotations
 
-import math
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Union
 
 import numpy as np
 
@@ -68,7 +66,7 @@ class VoiceActivityDetector:
         log.info("vad.loaded threshold=%s", self.threshold)
 
     @staticmethod
-    def _to_torch(audio: np.ndarray) -> "torch.Tensor":
+    def _to_torch(audio: np.ndarray) -> torch.Tensor:  # noqa: F821 -- `torch` is optional/lazy-imported below; safe because `from __future__ import annotations` (line 9) defers this annotation to a string, never evaluated at runtime
         """Convert numpy float32 audio to a torch tensor (silero-vad requirement)."""
         import torch  # type: ignore
         return torch.from_numpy(audio.astype(np.float32, copy=False))
@@ -77,7 +75,7 @@ class VoiceActivityDetector:
         self,
         audio: np.ndarray,
         sample_rate: int = 16000,
-    ) -> List[Segment]:
+    ) -> list[Segment]:
         """Detect speech segments in mono float32 audio.
 
         Args:
@@ -112,10 +110,10 @@ class VoiceActivityDetector:
         probs = VoiceActivityDetector._MODEL(chunks, sample_rate).cpu().numpy()
 
         # Convert to segments
-        segments: List[Segment] = []
+        segments: list[Segment] = []
         in_speech = False
         seg_start = 0
-        seg_probs: List[float] = []
+        seg_probs: list[float] = []
 
         min_speech_chunks = max(1, self.min_speech_ms * sample_rate // (chunk_size * 1000))
         min_silence_chunks = max(1, self.min_silence_ms * sample_rate // (chunk_size * 1000))
@@ -166,7 +164,7 @@ def detect_speech_segments(
     audio: np.ndarray,
     sample_rate: int = 16000,
     threshold: float = 0.5,
-) -> List[Segment]:
+) -> list[Segment]:
     """Convenience: detect segments in a numpy array using default VAD."""
     return VoiceActivityDetector(threshold=threshold).detect(audio, sample_rate)
 
@@ -181,7 +179,7 @@ def _resample(audio: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
     return np.interp(src_idx, np.arange(len(audio)), audio).astype(np.float32)
 
 
-def load_wav(path: Union[str, Path]) -> tuple[np.ndarray, int]:
+def load_wav(path: str | Path) -> tuple[np.ndarray, int]:
     """Load a WAV file as float32 mono. Returns (audio, sample_rate)."""
     with wave.open(str(path), "rb") as wf:
         sr = wf.getframerate()

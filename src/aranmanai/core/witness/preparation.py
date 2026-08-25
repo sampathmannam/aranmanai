@@ -1,7 +1,6 @@
 """Witness preparation service. Manages the prep workflow around the AI brief."""
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from typing import Any
 
@@ -34,9 +33,9 @@ class WitnessPreparationService:
         witness = self.db.get(Witness, witness_id)
         if not witness:
             raise ValueError(f"Witness not found: {witness_id}")
-        # Decrypt name + statement for the prompt (server-side; never logged)
+        # Decrypt statement for the prompt (server-side; never logged). The
+        # witness's name is deliberately kept out of the LLM prompt/logs.
         from aranmanai.security import decrypt_field
-        witness_name = decrypt_field(witness.name_encrypted)
         statement = decrypt_field(witness.statement_text_encrypted) or "(no 161 statement on file)"
 
         response = self.ai_service.prepare(

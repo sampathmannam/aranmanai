@@ -1,17 +1,16 @@
 """Court Monitoring System routes: calendar, timeline, bottlenecks, SP dashboard."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
 
 from aranmanai.api.deps import CurrentUser, DbSession, SpUser
-from aranmanai.core.cms.bottleneck import Bottleneck, BottleneckDetector
-from aranmanai.core.cms.daily_calendar import DailyCalendarEntry, DailyCalendarService
+from aranmanai.core.cms.bottleneck import BottleneckDetector
+from aranmanai.core.cms.daily_calendar import DailyCalendarService
 from aranmanai.core.cms.sp_dashboard import SpDashboardService
-from aranmanai.core.cms.timeline import TimelineEvent, TimelineService
+from aranmanai.core.cms.timeline import TimelineService
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)

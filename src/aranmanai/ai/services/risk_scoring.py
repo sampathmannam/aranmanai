@@ -36,10 +36,10 @@ class RiskScoreRequest(BaseModel):
     def _lapses_size(cls, v):
         # M-4 fix: cap per-element description to prevent prompt-injection
         # payloads and to keep total prompt size bounded
-        for l in v:
-            desc = l.get("description", "")
+        for lapse in v:
+            desc = lapse.get("description", "")
             if isinstance(desc, str) and len(desc) > 1000:
-                l["description"] = desc[:1000]
+                lapse["description"] = desc[:1000]
         return v
 
     @field_validator("hostile_witness_count")
@@ -87,7 +87,7 @@ class RiskScoringService:
             fsl_status=request.fsl_status,
             bnss_173_compliant=request.bnss_173_compliant,
             lapse_count=len(request.lapses),
-            fatal_lapse_count=sum(1 for l in request.lapses if l.get("tier") == "FATAL"),
+            fatal_lapse_count=sum(1 for lapse in request.lapses if lapse.get("tier") == "FATAL"),
             offence_type="other",
             days_since_fir=0,
             has_cctv=False,

@@ -17,7 +17,7 @@ What it does:
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -61,7 +61,7 @@ def main() -> None:
             print(f"  Open escalations: {view.n_escalations_open}")
             print(f"  Cases unreviewed by SP: {view.n_cases_unreviewed}")
             if view.top_priority:
-                print(f"  Top priority:")
+                print("  Top priority:")
                 for a in view.top_priority[:3]:
                     print(f"    - [{a['priority']}] {a['description'][:60]} (FIR: {a['fir_no']})")
             print()

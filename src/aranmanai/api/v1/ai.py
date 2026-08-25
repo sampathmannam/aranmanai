@@ -1,8 +1,6 @@
 """AI assist routes: complaint intake, FIR draft, chargesheet draft, etc."""
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -27,11 +25,11 @@ from aranmanai.ai.services.investigation_recommendations import (
     InvestigationRecommendationsResponse,
     InvestigationRecommendationsService,
 )
-from aranmanai.ai.services.sp_voice_dashboard import SpDashboardResult, SpVoiceDashboardService
-from aranmanai.api.deps import CurrentUser, DbSession, IoUser, PpUser, SpUser
+from aranmanai.ai.services.sp_voice_dashboard import SpVoiceDashboardService
+from aranmanai.api.deps import IoUser, SpUser
+from aranmanai.config import get_settings
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog
-from aranmanai.config import get_settings
 
 log = get_logger(__name__)
 router = APIRouter()
@@ -111,7 +109,7 @@ def investigation_recommendations(
 
 class SpVoiceRequest(BaseModel):
     command: str  # voice transcribed text or direct text input
-    language: Optional[str] = "en"  # en | ta | hi
+    language: str | None = "en"  # en | ta | hi
 
 
 @router.post("/sp-voice-dashboard", response_model=dict)

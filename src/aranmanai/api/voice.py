@@ -13,23 +13,19 @@ returns the audio SHA-256 hash for audit.
 """
 from __future__ import annotations
 
-import io
 import tempfile
+from contextlib import suppress
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from aranmanai.config import get_settings
 from aranmanai.core.voice import (
-    PipelineResult,
     SpeechToText,
     TextToSpeech,
-    TranscriptionResult,
     VoicePipeline,
-    voice_to_text,
 )
 from aranmanai.observability import get_logger
 
@@ -39,9 +35,9 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 
 
 # Module-level singletons (lazy-init on first request)
-_stt: Optional[SpeechToText] = None
-_pipeline: Optional[VoicePipeline] = None
-_tts: Optional[TextToSpeech] = None
+_stt: SpeechToText | None = None
+_pipeline: VoicePipeline | None = None
+_tts: TextToSpeech | None = None
 
 
 def _get_pipeline() -> VoicePipeline:
@@ -88,8 +84,8 @@ class PipelineResponse(BaseModel):
 
 class SpeakRequest(BaseModel):
     text: str
-    voice_id: Optional[str] = None
-    rate: Optional[int] = None
+    voice_id: str | None = None
+    rate: int | None = None
 
 
 class CapabilitiesResponse(BaseModel):
@@ -126,15 +122,13 @@ def _looks_like_audio(data: bytes) -> bool:
     # MP3: ID3 tag, or a frame sync (11 set bits: 0xFF followed by 0xE0-0xFF)
     if len(data) >= 3 and data[0:3] == b"ID3":
         return True
-    if len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0:
-        return True
-    return False
+    return len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0
 
 
 @router.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe(
     audio: UploadFile = File(..., description="Audio file (WAV/MP3/M4A/OGG)"),
-    language: Optional[str] = Form(None, description="ISO 639-1: en/ta/hi/..."),
+    language: str | None = Form(None, description="ISO 639-1: en/ta/hi/..."),
 ) -> TranscribeResponse:
     """STT-only: convert audio to text. Returns language + confidence + audio hash."""
     settings = get_settings()
@@ -163,16 +157,14 @@ async def transcribe(
             audio_sha256=r.audio_sha256,
         )
     finally:
-        try:
+        with suppress(OSError):
             tmp_path.unlink()
-        except OSError:
-            pass
 
 
 @router.post("/pipeline", response_model=PipelineResponse)
 async def pipeline(
     audio: UploadFile = File(..., description="Audio file (WAV/MP3/M4A/OGG)"),
-    language: Optional[str] = Form(None, description="ISO 639-1: en/ta/hi/..."),
+    language: str | None = Form(None, description="ISO 639-1: en/ta/hi/..."),
 ) -> PipelineResponse:
     """Full VAD+STT pipeline: split speech segments, transcribe each, join."""
     settings = get_settings()
@@ -208,10 +200,8 @@ async def pipeline(
             ],
         )
     finally:
-        try:
+        with suppress(OSError):
             tmp_path.unlink()
-        except OSError:
-            pass
 
 
 @router.post("/speak")

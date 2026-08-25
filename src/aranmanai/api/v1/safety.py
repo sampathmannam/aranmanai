@@ -16,18 +16,19 @@ from __future__ import annotations
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime
 from threading import Lock
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from pydantic import BaseModel
 
-from aranmanai.api.deps import CurrentUser, DbSession, IoUser, SpUser, WomenPatrolUser
+from aranmanai.api.deps import DbSession, IoUser, SpUser
 from aranmanai.db.models.safety import (
     AnonymousReport as AnonymousReportRow,
+)
+from aranmanai.db.models.safety import (
     HelplineCall as HelplineCallRow,
+)
+from aranmanai.db.models.safety import (
     PatrolDispatch as PatrolDispatchRow,
 )
 from aranmanai.db.models.user import User, UserRole
@@ -347,14 +348,13 @@ def dispatch_patrol(req: PatrolDispatchRequest, user: SpUser, db: DbSession, req
 
 
 @router.get("/patrol/dispatches")
-def list_patrol_dispatches(user: SpUser, db: DbSession, district: Optional[str] = None) -> dict:
+def list_patrol_dispatches(user: SpUser, db: DbSession, district: str | None = None) -> dict:
     """List patrol dispatches for the district. SP view.
 
     C-5 fix: now reads from DB.
     P1 fix (H-2 IDOR): a non-admin SP can only list their own district.
     Passing district=other-district was a cross-district read.
     """
-    from datetime import datetime as _dt
     from sqlalchemy import desc
 
     target = district or user.district

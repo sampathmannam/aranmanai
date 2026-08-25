@@ -1,16 +1,31 @@
 """FastAPI application factory + startup wiring."""
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError
 
-from aranmanai.api.v1 import ai, auth, cases, cmc, cms, coordination, dpdp, hearings, kishore_review, pilot, risk, safety, vetting, witnesses
 from aranmanai.api import tamil, voice
+from aranmanai.api.v1 import (
+    ai,
+    auth,
+    cases,
+    cmc,
+    cms,
+    coordination,
+    dpdp,
+    hearings,
+    kishore_review,
+    pilot,
+    risk,
+    safety,
+    vetting,
+    witnesses,
+)
 from aranmanai.config import get_settings
 from aranmanai.db import init_db
 from aranmanai.observability import get_logger, setup_logging
@@ -52,7 +67,6 @@ def create_app() -> FastAPI:
     # M-5: HSTS for production HTTPS (only applied when env=production)
     if settings.environment == "production":
         from starlette.middleware.base import BaseHTTPMiddleware
-        from starlette.responses import Response
 
         class HSTSMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request, call_next):

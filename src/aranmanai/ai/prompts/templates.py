@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Prompt templates for every AI assist endpoint.
 
 Each function returns (system_prompt, user_prompt) given the inputs.
@@ -8,8 +6,7 @@ includes a 'review required' marker so the IO knows the AI did not
 auto-apply. v2 will move the FBR/Quint/BPRD study citations into
 RAG chunks passed in the context.
 """
-from aranmanai.ai.prompts._sanitize import delimit, sanitize_for_llm
-
+from __future__ import annotations
 
 SYSTEM_GENERIC = (
     "You are Aranmanai AI, an assistant to Indian Police IO/SP/PP officers. "

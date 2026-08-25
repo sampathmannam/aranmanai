@@ -22,24 +22,22 @@ Endpoints:
 """
 from __future__ import annotations
 
-from datetime import date as _date, datetime, timedelta
-from typing import Optional
+from datetime import date as _date
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from aranmanai.ai.services.cmc_loop import CmcLoopService
-from aranmanai.api.deps import CurrentUser, DbSession, DspUser, IoUser, PpUser, SpUser
+from aranmanai.api.deps import DbSession, DspUser, IoUser, PpUser, SpUser
+from aranmanai.config import get_settings
 from aranmanai.db.models.coordination import (
     ActionItem,
     ActionPriority,
     ActionStatus,
-    Escalation,
-    SpDailyReview,
 )
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog
-from aranmanai.config import get_settings
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/cmc", tags=["cmc-loop"])
@@ -54,9 +52,9 @@ def _audit() -> AuditLog:
 # ──────────────────────────────────────────────────────────
 
 class CmcMeetingRequest(BaseModel):
-    meeting_date: Optional[str] = None
+    meeting_date: str | None = None
     attendees: list[str] = []
-    minutes: Optional[str] = None
+    minutes: str | None = None
 
 
 class CmcMeetingResponse(BaseModel):
@@ -80,17 +78,17 @@ class CmcActionAssignRequest(BaseModel):
 
 class CmcActionAnswerRequest(BaseModel):
     answer: str
-    answer_detail: Optional[str] = None
+    answer_detail: str | None = None
 
 
 class CmcPpAnswerRequest(BaseModel):
     answer: str  # ready | not_ready | needs_evidence | blocked
-    answer_detail: Optional[str] = None
+    answer_detail: str | None = None
     evidence_needed: list[str] = []
 
 
 class CmcEscalationAcknowledgeRequest(BaseModel):
-    note: Optional[str] = None
+    note: str | None = None
 
 
 class CmcEscalationResolveRequest(BaseModel):
@@ -99,9 +97,9 @@ class CmcEscalationResolveRequest(BaseModel):
 
 class CmcSpReviewRequest(BaseModel):
     case_id: str
-    review_date: Optional[str] = None
+    review_date: str | None = None
     status: str = "reviewed"
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class CmcSweepResponse(BaseModel):
@@ -134,7 +132,7 @@ class ConstableCommendRequest(BaseModel):
     performance_id: str
     cash_reward_amount: int = 0
     issue_certificate: bool = True
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class ConstablePenalizeRequest(BaseModel):
@@ -214,7 +212,7 @@ def answer_action(action_id: str, req: CmcActionAnswerRequest, user: IoUser, db:
             answered_by=user.id,
         )
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     _audit().append(
         AuditAction.UPDATE_WITNESS,
         actor_id=user.id,
@@ -246,7 +244,7 @@ def pp_answer_action(action_id: str, req: CmcPpAnswerRequest, user: PpUser, db: 
             evidence_needed=req.evidence_needed,
         )
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     _audit().append(
         AuditAction.UPDATE_WITNESS,
         actor_id=user.id,
@@ -268,7 +266,7 @@ def sp_review_action(action_id: str, user: SpUser, db: DbSession) -> dict:
     try:
         a = svc.mark_sp_reviewed(action_id)
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     return {"action_id": a.id, "sp_reviewed": a.sp_reviewed, "sp_reviewed_at": a.sp_reviewed_at.isoformat()}
 
 
@@ -288,7 +286,7 @@ def acknowledge_escalation(escalation_id: str, req: CmcEscalationAcknowledgeRequ
     try:
         e = svc.acknowledge_escalation(escalation_id, note=req.note)
     except ValueError as ex:
-        raise HTTPException(404, str(ex))
+        raise HTTPException(404, str(ex)) from ex
     return {"escalation_id": e.id, "status": e.status.value}
 
 
@@ -298,7 +296,7 @@ def resolve_escalation(escalation_id: str, req: CmcEscalationResolveRequest, use
     try:
         e = svc.resolve_escalation(escalation_id, note=req.note)
     except ValueError as ex:
-        raise HTTPException(404, str(ex))
+        raise HTTPException(404, str(ex)) from ex
     return {"escalation_id": e.id, "status": e.status.value, "resolved_at": e.resolved_at.isoformat()}
 
 
@@ -330,7 +328,7 @@ def sp_review_case(req: CmcSpReviewRequest, user: SpUser, db: DbSession) -> dict
 
 
 @router.get("/daily-view", response_model=CmcDailyViewResponse)
-def daily_view(user: SpUser, db: DbSession, target_date: Optional[str] = None) -> CmcDailyViewResponse:
+def daily_view(user: SpUser, db: DbSession, target_date: str | None = None) -> CmcDailyViewResponse:
     svc = CmcLoopService(db)
     target = _date.fromisoformat(target_date) if target_date else _date.today()
     v = svc.daily_view(district=user.district, target_date=target)
@@ -400,7 +398,7 @@ def constable_commend(req: ConstableCommendRequest, user: SpUser, db: DbSession)
             reason=req.reason,
         )
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     _audit().append(
         AuditAction.UPDATE_WITNESS,
         actor_id=user.id,
@@ -433,7 +431,7 @@ def constable_penalize(req: ConstablePenalizeRequest, user: SpUser, db: DbSessio
             reason=req.reason,
         )
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     _audit().append(
         AuditAction.UPDATE_WITNESS,
         actor_id=user.id,
@@ -455,7 +453,7 @@ def constable_penalize(req: ConstablePenalizeRequest, user: SpUser, db: DbSessio
 # ──────────────────────────────────────────────────────────
 
 @router.get("/dsp-weekly-rollup")
-def dsp_weekly_rollup(user: DspUser, db: DbSession, week_start: Optional[str] = None) -> dict:
+def dsp_weekly_rollup(user: DspUser, db: DbSession, week_start: str | None = None) -> dict:
     """DSP-level weekly review: one row per police station in district.
 
     Per The Hindu [11]: IGP directed DSPs to review cases station-wise
@@ -473,7 +471,7 @@ def dsp_weekly_rollup(user: DspUser, db: DbSession, week_start: Optional[str] = 
 # ──────────────────────────────────────────────────────────
 
 @router.get("/pilot-metrics")
-def pilot_metrics(user: SpUser, db: DbSession, district: Optional[str] = None) -> dict:
+def pilot_metrics(user: SpUser, db: DbSession, district: str | None = None) -> dict:
     """Conviction rate + delta vs baseline for the pilot.
 
     Returns the actual conviction rate from closed pilot cases plus

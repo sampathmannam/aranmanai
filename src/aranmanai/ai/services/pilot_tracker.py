@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -105,7 +105,7 @@ class PilotTrackerService:
         cure = {
             "lapse_key": lapse_key,
             "cure_action": cure_action,
-            "applied_at": datetime.now(timezone.utc).isoformat(),
+            "applied_at": datetime.now(UTC).isoformat(),
         }
         pc.cures_applied = (pc.cures_applied or []) + [cure]
         self.db.commit()
@@ -137,7 +137,7 @@ class PilotTrackerService:
             pc.post_hostile_witnesses = post_hostile_witnesses
         if notes:
             pc.notes = (pc.notes or "") + f"\n[mid-review] {notes}"
-        pc.mid_review_at = datetime.now(timezone.utc)
+        pc.mid_review_at = datetime.now(UTC)
         self.db.commit()
         self.db.refresh(pc)
         log.info("pilot.mid_review case_id=%s post_p=%.2f", pc.case_id, post_p_conviction)
@@ -157,11 +157,11 @@ class PilotTrackerService:
             raise ValueError(f"Pilot case {pilot_case_id} not found")
 
         pc.outcome = outcome
-        pc.outcome_date = outcome_date or datetime.now(timezone.utc)
+        pc.outcome_date = outcome_date or datetime.now(UTC)
         pc.sentence = sentence
         if notes:
             pc.notes = (pc.notes or "") + f"\n[close] {notes}"
-        pc.closed_at = datetime.now(timezone.utc)
+        pc.closed_at = datetime.now(UTC)
         self.db.commit()
         self.db.refresh(pc)
         log.info("pilot.close case_id=%s outcome=%s", pc.case_id, outcome)

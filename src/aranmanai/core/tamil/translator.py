@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import ClassVar
 
 from aranmanai.observability import get_logger
 
@@ -43,7 +43,7 @@ class TranslationResult:
     source_sha256: str
     # Was this a direct translation or a routed pipeline (e.g. ta->en->hi)?
     routed: bool = False
-    via: Optional[str] = None
+    via: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -67,7 +67,7 @@ class Translator:
         print(r.translated_text)
     """
 
-    _PIPELINES: dict[str, object] = {}  # shared cache
+    _PIPELINES: ClassVar[dict[str, object]] = {}  # shared cache
 
     def __init__(self, device: str = "cpu"):
         self.device = device
@@ -76,8 +76,8 @@ class Translator:
         if model_name in Translator._PIPELINES:
             return Translator._PIPELINES[model_name]
         try:
-            from transformers import MarianMTModel, MarianTokenizer  # type: ignore
             import torch  # type: ignore
+            from transformers import MarianMTModel, MarianTokenizer  # type: ignore
         except ImportError as e:
             raise RuntimeError(
                 "transformers/torch not installed. Install: pip install transformers torch"
@@ -107,7 +107,7 @@ class Translator:
         log.info("translator.loaded model=%s", model_name)
         return p
 
-    def _resolve_model(self, source: str, target: str) -> Tuple[Optional[str], bool]:
+    def _resolve_model(self, source: str, target: str) -> tuple[str | None, bool]:
         """Resolve the model name for a (source, target) pair.
 
         Returns (model_name, routed). routed=True means we need to chain
@@ -129,7 +129,7 @@ class Translator:
         self,
         text: str,
         source: str,
-        target: Optional[str] = None,
+        target: str | None = None,
     ) -> TranslationResult:
         """Translate text from source lang to target lang (or auto-detect target)."""
         if not text or not text.strip():

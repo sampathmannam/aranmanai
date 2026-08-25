@@ -8,17 +8,15 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from aranmanai.ai.services.cross_exam_prep import CrossExamPrepRequest
+from aranmanai.api.deps import CurrentUser, DbSession, IoUser, PpUser
+from aranmanai.config import get_settings
 from aranmanai.core.witness.categorization import WitnessCategorizationService
 from aranmanai.core.witness.preparation import WitnessPreparationService
-from aranmanai.api.deps import CurrentUser, DbSession, IoUser, PpUser, SpUser
 from aranmanai.db.models.case import Case
 from aranmanai.db.models.witness import Witness, WitnessCategory, WitnessPrepStatus, WitnessType
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog, decrypt_field, encrypt_field
-from aranmanai.config import get_settings
 
 log = get_logger(__name__)
 router = APIRouter()

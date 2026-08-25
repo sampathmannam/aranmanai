@@ -22,13 +22,13 @@ Each endpoint set addresses one of the gaps:
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, or_
 
 from aranmanai.api.deps import CurrentUser, DbSession, IoUser, SpUser
+from aranmanai.config import get_settings
 from aranmanai.db.models.case import Case
 from aranmanai.db.models.kishore_review import (
     CaseFamilyLiaison,
@@ -44,7 +44,6 @@ from aranmanai.db.models.safety import HelplineCall
 from aranmanai.db.models.user import User, UserRole
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog
-from aranmanai.config import get_settings
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/kishore", tags=["kishore-review"])
@@ -86,8 +85,8 @@ class HelplineGPSRequest(BaseModel):
     caller_lng: float = Field(..., ge=-180, le=180)
     # Auto-resolve nearest station (in production, would use a station
     # boundary map; v1 uses a simple lat/lng proximity lookup)
-    auto_station: Optional[str] = None
-    distance_to_station_km: Optional[float] = None
+    auto_station: str | None = None
+    distance_to_station_km: float | None = None
     geo_resolution_method: str = "manual"
 
 
@@ -280,13 +279,13 @@ class CaseListItem(BaseModel):
     status: str
     stage: str
     district: str
-    court: Optional[str] = None
-    judge: Optional[str] = None
-    io_username: Optional[str] = None
-    pp_username: Optional[str] = None
-    next_hearing: Optional[str] = None
-    risk_score: Optional[float] = None
-    charge_sheet_deadline: Optional[str] = None
+    court: str | None = None
+    judge: str | None = None
+    io_username: str | None = None
+    pp_username: str | None = None
+    next_hearing: str | None = None
+    risk_score: float | None = None
+    charge_sheet_deadline: str | None = None
     pilot_flag: bool = False
 
 
@@ -304,9 +303,9 @@ def list_cases(
     user: CurrentUser,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
-    search: Optional[str] = Query(None, description="FIR number or text"),
-    status: Optional[str] = Query(None),
-    stage: Optional[str] = Query(None),
+    search: str | None = Query(None, description="FIR number or text"),
+    status: str | None = Query(None),
+    stage: str | None = Query(None),
     pilot_only: bool = Query(False),
     sort: str = Query("fir_date_desc"),
 ) -> CaseListResponse:
@@ -323,7 +322,7 @@ def list_cases(
     districts_visible = [user.district]
     deputations = db.query(Deputation).filter(
         Deputation.user_id == user.id,
-        Deputation.is_active == True,
+        Deputation.is_active,
         Deputation.end_date >= now,
     ).all()
     for d in deputations:
@@ -341,7 +340,7 @@ def list_cases(
     if stage:
         q = q.filter(Case.stage == stage)
     if pilot_only:
-        q = q.filter(Case.pilot_flag == True)
+        q = q.filter(Case.pilot_flag)
 
     # Sorting
     if sort == "fir_date_desc":
@@ -386,7 +385,7 @@ def list_cases(
 class ChargeSheetVersionRequest(BaseModel):
     case_id: str
     draft_text: str
-    pp_review_notes: Optional[str] = None
+    pp_review_notes: str | None = None
     status: str = "draft"  # 'draft' | 'pp_reviewed' | 'filed' | 'rejected'
 
 
@@ -397,9 +396,9 @@ class ChargeSheetVersionResponse(BaseModel):
     drafted_by: str
     drafted_at: str
     status: str
-    pp_reviewed_by: Optional[str] = None
-    pp_reviewed_at: Optional[str] = None
-    pp_review_notes: Optional[str] = None
+    pp_reviewed_by: str | None = None
+    pp_reviewed_at: str | None = None
+    pp_review_notes: str | None = None
 
 
 @router.post("/cases/{case_id}/charge-sheet-versions", response_model=ChargeSheetVersionResponse)
@@ -619,10 +618,10 @@ def translate_case_entry(
 class FIRAutofillResponse(BaseModel):
     case_id: str
     fir_no: str
-    complainant_name: Optional[str] = None
-    complainant_contact: Optional[str] = None
-    location: Optional[str] = None
-    incident_datetime: Optional[str] = None
+    complainant_name: str | None = None
+    complainant_contact: str | None = None
+    location: str | None = None
+    incident_datetime: str | None = None
     facts_summary: str
     bns_sections_suggested: list[str]
     auto_filled_fields: list[str]
@@ -641,7 +640,6 @@ def get_fir_autofill(
     if not case:
         raise HTTPException(404, "Case not found")
 
-    io_user = db.get(User, case.io_id) if case.io_id else None
     facts = case.facts or ""
     auto_filled = []
 
@@ -674,9 +672,9 @@ def get_fir_autofill(
 
 class CaseTransferRequest(BaseModel):
     case_id: str
-    to_io_id: Optional[str] = None
-    to_pp_id: Optional[str] = None
-    reason: Optional[str] = None
+    to_io_id: str | None = None
+    to_pp_id: str | None = None
+    reason: str | None = None
 
 
 @router.post("/cases/{case_id}/transfer")
@@ -754,24 +752,24 @@ def transfer_case(
 class FamilyLiaisonRequest(BaseModel):
     case_id: str
     family_contact: str
-    family_contact_relationship: Optional[str] = None
-    family_counsel: Optional[str] = None
+    family_contact_relationship: str | None = None
+    family_counsel: str | None = None
     what_communicated: str
     followup_required: bool = False
-    followup_due: Optional[date] = None
+    followup_due: date | None = None
 
 
 class FamilyLiaisonResponse(BaseModel):
     id: str
     case_id: str
     family_contact: str
-    family_contact_relationship: Optional[str] = None
-    family_counsel: Optional[str] = None
+    family_contact_relationship: str | None = None
+    family_counsel: str | None = None
     what_communicated: str
     briefed_by: str
     briefed_at: str
     followup_required: bool
-    followup_due: Optional[str] = None
+    followup_due: str | None = None
 
 
 @router.post("/cases/{case_id}/family-liaison", response_model=FamilyLiaisonResponse)
@@ -890,7 +888,7 @@ class HelplineUpstreamRequest(BaseModel):
     upstream_system: str  # '1091' | '181' | '112' | 'other'
     upstream_reference: str
     # P2 fix: cap raw_payload at 16KB to prevent DB DoS via large POST
-    raw_payload: Optional[dict] = Field(default=None, max_length=16384)
+    raw_payload: dict | None = Field(default=None, max_length=16384)
 
 
 class HelplineUpstreamResponse(BaseModel):
@@ -984,8 +982,8 @@ def register_helpline_upstream(
 class PPBriefingCreate(BaseModel):
     case_id: str
     pp_id: str
-    case_action_id: Optional[str] = None
-    notes: Optional[str] = None
+    case_action_id: str | None = None
+    notes: str | None = None
     requires_response: bool = False
 
 
@@ -993,11 +991,11 @@ class PPBriefingResponse(BaseModel):
     id: str
     case_id: str
     pp_id: str
-    case_action_id: Optional[str] = None
+    case_action_id: str | None = None
     # v1.1: was `read_at`. Now `recorded_at` (the row creation time).
     # Actual PP read time is tracked separately when that endpoint ships.
     recorded_at: str
-    notes: Optional[str] = None
+    notes: str | None = None
     requires_response: bool
 
 
@@ -1104,7 +1102,7 @@ class DeputationCreate(BaseModel):
     deputation_district: str
     start_date: date
     end_date: date
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class DeputationResponse(BaseModel):
@@ -1114,7 +1112,7 @@ class DeputationResponse(BaseModel):
     deputation_district: str
     start_date: str
     end_date: str
-    reason: Optional[str] = None
+    reason: str | None = None
     is_active: bool
     approved_by: str
 
@@ -1151,7 +1149,7 @@ def create_deputation(
     # End any existing active deputation for this user
     existing = (
         db.query(Deputation)
-        .filter(Deputation.user_id == req.user_id, Deputation.is_active == True)
+        .filter(Deputation.user_id == req.user_id, Deputation.is_active)
         .all()
     )
     for e in existing:

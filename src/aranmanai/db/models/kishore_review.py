@@ -6,13 +6,12 @@ in his review of Aranmanai v1.1.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from aranmanai.db.session import Base
-
 
 # ──────────────────────────────────────────────────────────────
 # F1: HelplineCall GPS + auto-station dispatch
@@ -36,7 +35,7 @@ class HelplineCallGPS(Base):
     distance_to_station_km: Mapped[float | None] = mapped_column(Float, nullable=True)
     geo_resolution_method: Mapped[str] = mapped_column(String(32), default="manual", nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
 
 
@@ -68,7 +67,7 @@ class ChargeSheetDeadline(Base):
         String(36), ForeignKey("user.id"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
 
 
@@ -92,7 +91,7 @@ class ChargeSheetVersion(Base):
     draft_text: Mapped[str] = mapped_column(Text, nullable=False)
     drafted_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False)
     drafted_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
     pp_reviewed_by: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("user.id"), nullable=True
@@ -134,10 +133,10 @@ class CaseTransfer(Base):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     transferred_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False)
     transferred_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
+        DateTime, default=lambda: datetime.now(UTC), nullable=False, index=True
     )
     effective_from: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
 
 
@@ -163,7 +162,7 @@ class CaseFamilyLiaison(Base):
     family_counsel: Mapped[str | None] = mapped_column(String(128), nullable=True)
     briefed_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), nullable=False)
     briefed_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
     what_communicated: Mapped[str] = mapped_column(Text, nullable=False)
     followup_required: Mapped[bool] = mapped_column(default=False, nullable=False)
@@ -189,7 +188,7 @@ class HelplineUpstreamRef(Base):
     upstream_system: Mapped[str] = mapped_column(String(32), nullable=False)  # '1091' | '181' | '112' | 'other'
     upstream_reference: Mapped[str] = mapped_column(String(128), nullable=False)
     received_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
 
@@ -221,7 +220,7 @@ class PPBriefing(Base):
     # a future query that filters on `read_at > now() - interval '1 day'`
     # from silently returning ALL briefings ever sent.
     recorded_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
+        DateTime, default=lambda: datetime.now(UTC), nullable=False, index=True
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     requires_response: Mapped[bool] = mapped_column(default=False, nullable=False)

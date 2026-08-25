@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 import requests
@@ -253,7 +254,7 @@ def render_voice_tab() -> None:
         "Transcribe", type="primary", key=transcribe_key, disabled=in_flight
     )
     generate_clicked = col_btn[1].button(
-        "Transcribe + Generate complaint", disabled=in_flight
+        "Transcribe + Generate complaint", key=generate_key, disabled=in_flight
     )
 
     if audio_file and (transcribe_clicked or generate_clicked):
@@ -330,10 +331,8 @@ def render_voice_tab() -> None:
                 st.error(f"Transcription error: {e}")
             finally:
                 if tmp_path:
-                    try:
+                    with suppress(OSError):
                         tmp_path.unlink()
-                    except OSError:
-                        pass
                 st.session_state["_voice_in_flight"] = False
 
     # F-10: Complainant Details review + submit step. Rendered whenever

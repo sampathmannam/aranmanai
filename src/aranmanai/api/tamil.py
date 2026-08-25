@@ -10,19 +10,14 @@ Endpoints:
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from aranmanai.core.tamil import (
-    Embedding,
     TamilPipeline,
     TextEmbedder,
     Translator,
     detect_language,
-    embed_text,
-    translate,
 )
 from aranmanai.observability import get_logger
 
@@ -31,9 +26,9 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/tamil", tags=["tamil"])
 
 # Lazy singletons
-_translator: Optional[Translator] = None
-_embedder: Optional[TextEmbedder] = None
-_pipeline: Optional[TamilPipeline] = None
+_translator: Translator | None = None
+_embedder: TextEmbedder | None = None
+_pipeline: TamilPipeline | None = None
 
 
 def _get_translator() -> Translator:
@@ -83,7 +78,7 @@ class TranslateResponse(BaseModel):
     model: str
     source_sha256: str
     routed: bool = False
-    via: Optional[str] = None
+    via: str | None = None
 
 
 class EmbedRequest(BaseModel):
@@ -108,8 +103,8 @@ class PipelineResponse(BaseModel):
     source_text: str
     source_lang: str
     source_confidence: float
-    translated_text: Optional[str] = None
-    embedding: Optional[list[float]] = None
+    translated_text: str | None = None
+    embedding: list[float] | None = None
     model: str = "Helsinki-NLP/opus-mt + paraphrase-multilingual-MiniLM-L12-v2"
 
 

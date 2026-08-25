@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 from typing import Any
 
 import structlog
@@ -33,22 +32,32 @@ def setup_logging() -> None:
     ]
 
     if settings.log_format == "json":
-        processors = shared_processors + [
+        processors = [
+            *shared_processors,
             structlog.processors.dict_tracebacks,
             structlog.processors.JSONRenderer(),
         ]
     else:
-        processors = shared_processors + [
+        processors = [
+            *shared_processors,
             structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty()),
         ]
 
+    # SIM115: this file handle is intentionally NOT opened in a `with`
+    # block -- structlog.WriteLoggerFactory holds it open for every log
+    # write over the process's whole lifetime (same pattern as passing
+    # sys.stderr above), not a single short-lived operation. Closing it
+    # on function exit would break all subsequent logging.
+    log_file_handle = (
+        open(settings.log_file, "a", encoding="utf-8") if settings.log_file else None  # noqa: SIM115
+    )
     structlog.configure(
         processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(file=sys.stderr)
-        if not settings.log_file
-        else structlog.WriteLoggerFactory(file=open(settings.log_file, "a", encoding="utf-8")),
+        if log_file_handle is None
+        else structlog.WriteLoggerFactory(file=log_file_handle),
         cache_logger_on_first_use=True,
     )
 

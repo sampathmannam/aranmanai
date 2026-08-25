@@ -10,7 +10,6 @@ import base64
 import json as _json
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 # Add project root to sys.path so `from aranmanai...` works under streamlit
@@ -211,7 +210,7 @@ def login_page() -> None:
 # U-8: persistent breadcrumb at top of every page
 # ──────────────────────────────────────────────────────────────
 def _breadcrumb(page_name: str) -> None:
-    st.caption(f"Aranmanai › **{page_name}**")
+    st.caption(f"Aranmanai › **{page_name}**")  # noqa: RUF001 -- intentional breadcrumb separator
 
 
 # ──────────────────────────────────────────────────────────────

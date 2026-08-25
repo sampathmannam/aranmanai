@@ -76,7 +76,7 @@ class Evidence(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    case: Mapped["Case"] = relationship("Case", back_populates="evidence", lazy="joined")
+    case: Mapped[Case] = relationship("Case", back_populates="evidence", lazy="joined")
 
     def __repr__(self) -> str:
         return f"<Evidence {self.id[:8]} type={self.type.value} chain={self.chain_status.value}>"

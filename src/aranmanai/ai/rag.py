@@ -11,7 +11,6 @@ script is at scripts/ingest_corpus.py (to be added in Phase 2 day 3-4).
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from aranmanai.config import get_settings
@@ -70,7 +69,7 @@ def retrieve(query: str, n_results: int = 5, where: dict[str, Any] | None = None
         dists = res.get("distances", [[]])[0]
         return [
             {"text": d, "metadata": m or {}, "distance": dist}
-            for d, m, dist in zip(docs, metas, dists)
+            for d, m, dist in zip(docs, metas, dists, strict=False)
         ]
     except Exception as e:
         log.error("rag.retrieve failed: %s", e)

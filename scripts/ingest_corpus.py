@@ -13,7 +13,6 @@ Requires: chromadb, sentence-transformers (ml extras)
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
 from pathlib import Path
 
@@ -710,19 +709,6 @@ def main() -> None:
         name="aranmanai_corpus",
         metadata={"hnsw:space": "cosine"},
     )
-
-    texts = [s["text"] for s in SECTIONS]
-    ids = [s["id"] for s in SECTIONS]
-    metas = [
-        {
-            "category": s["category"],
-            "act": s["act"],
-            "section": s["section"],
-            "offence": s["offence"],
-            "max_imprisonment": s["max_imprisonment"],
-        }
-        for s in SECTIONS
-    ]
 
     # Chunk long sections into smaller pieces (~500 chars each) for better retrieval
     chunk_size = 500

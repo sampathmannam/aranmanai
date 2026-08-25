@@ -28,8 +28,6 @@ from aranmanai.db.session import Base
 
 if TYPE_CHECKING:
     from aranmanai.db.models.case import Case
-    from aranmanai.db.models.user import User
-    from aranmanai.db.models.hearing import Hearing
 
 
 # ──────────────────────────────────────────────────────────────
@@ -72,7 +70,7 @@ class CoordinationNote(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    case: Mapped["Case"] = relationship("Case", back_populates="coordination_notes")
+    case: Mapped[Case] = relationship("Case", back_populates="coordination_notes")
 
     def __repr__(self) -> str:
         return f"<CoordinationNote {self.note_type} case={self.case_id[:8]} actor={self.actor_role}>"

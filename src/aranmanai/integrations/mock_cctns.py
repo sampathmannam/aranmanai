@@ -7,7 +7,6 @@ file. When DGP sign-off arrives, swap the implementation.
 from __future__ import annotations
 
 import json
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any

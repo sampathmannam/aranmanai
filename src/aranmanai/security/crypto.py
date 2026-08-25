@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
-import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from cryptography.fernet import Fernet
@@ -63,11 +61,11 @@ def decrypt_field(ciphertext: str) -> str:
 def generate_token(subject: str, extra_claims: dict[str, Any] | None = None) -> str:
     """Generate a JWT for the given subject (user_id)."""
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiry_minutes)
+    expire = datetime.now(UTC) + timedelta(minutes=settings.jwt_expiry_minutes)
     claims = {
         "sub": subject,
         "exp": expire,
-        "iat": datetime.now(timezone.utc),
+        "iat": datetime.now(UTC),
         "iss": "aranmanai",
     }
     if extra_claims:

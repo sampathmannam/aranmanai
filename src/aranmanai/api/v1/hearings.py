@@ -6,16 +6,15 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from aranmanai.api.deps import CurrentUser, DbSession, IoUser, PpUser
+from aranmanai.config import get_settings
 from aranmanai.db.models.case import Case
 from aranmanai.db.models.hearing import Hearing
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog
-from aranmanai.config import get_settings
 
 log = get_logger(__name__)
 router = APIRouter()

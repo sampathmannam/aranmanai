@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 import random
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -29,9 +29,9 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from aranmanai.config import get_settings
-from aranmanai.db import Base, engine, init_db, SessionLocal  # noqa: F401 — engine is callable
+from aranmanai.db import Base, SessionLocal, engine, init_db
 from aranmanai.db.models.case import Case, CaseStage, CaseStatus
-from aranmanai.db.models.evidence import Evidence, EvidenceType, FslStatus, EvidenceChainStatus
+from aranmanai.db.models.evidence import Evidence, EvidenceChainStatus, EvidenceType, FslStatus
 from aranmanai.db.models.hearing import Hearing
 from aranmanai.db.models.user import User, UserRole
 from aranmanai.db.models.witness import Witness, WitnessCategory, WitnessPrepStatus, WitnessType
@@ -172,7 +172,6 @@ def _ensure_io(db, district: str) -> User:
     io = db.query(User).filter(User.role == UserRole.IO, User.district == district).first()
     if io:
         return io
-    settings = get_settings()
     io = User(
         username="io_1",
         hashed_password=hash_password("Aranmanai!Dev!2026"),
@@ -218,7 +217,7 @@ def _witness_for(db, case_id: str, idx: int, name: str, type_: WitnessType,
         language="ta",
         prep_status=prep_status,
         hostile_reason=hostile_reason if category == WitnessCategory.HOSTILE else None,
-        last_contact=datetime.now(timezone.utc) - timedelta(days=random.randint(0, 14)),
+        last_contact=datetime.now(UTC) - timedelta(days=random.randint(0, 14)),
     )
     db.add(w)
     db.flush()
@@ -252,7 +251,7 @@ def _hearing_for(db, case_id: str, stage: str, days_from_now: int,
                 witnesses: list) -> Hearing:
     h = Hearing(
         case_id=case_id,
-        date=datetime.now(timezone.utc) + timedelta(days=days_from_now),
+        date=datetime.now(UTC) + timedelta(days=days_from_now),
         stage=stage,
         pp_present=pp_present,
         defense_present=defense_present,
@@ -333,12 +332,11 @@ def seed_case(db, idx: int, offence: str, district: str) -> Case:
         type_ = random.choice(list(EvidenceType))
         chain = random.choice([EvidenceChainStatus.SEALED, EvidenceChainStatus.SEALED, EvidenceChainStatus.SEALED, EvidenceChainStatus.BROKEN])
         fsl = random.choice(list(FslStatus))
-        has_cctv = random.random() < 0.3
         _evidence_for(db, case_id, type_, chain, fsl)
 
     # Hearings: 1-3 past hearings + 1 upcoming
     n_past_hearings = random.randint(1, 3)
-    for i in range(n_past_hearings):
+    for _ in range(n_past_hearings):
         days_ago = random.randint(15, 180)
         _hearing_for(
             db, case_id, "witness_examination", -days_ago,
@@ -349,7 +347,7 @@ def seed_case(db, idx: int, offence: str, district: str) -> Case:
     days_ahead = random.randint(0, 30)
     if days_ahead == 0:
         days_ahead = 1  # always at least 1 day out
-    case.next_hearing = datetime.now(timezone.utc) + timedelta(days=days_ahead)
+    case.next_hearing = datetime.now(UTC) + timedelta(days=days_ahead)
     _hearing_for(
         db, case_id, "witness_examination", days_ahead,
         pp_present=True, defense_present=True, accused_present=random.random() < 0.85,
@@ -389,17 +387,17 @@ def main() -> None:
         idx = 0
         for offence in offences:
             count = distribution.get(offence.strip(), 2)
-            for i in range(count):
+            for _ in range(count):
                 case = seed_case(db, idx, offence.strip(), district)
                 log.info("seed.case", id=case.id, fir=case.fir_no, offence=offence)
                 idx += 1
         db.commit()
         log.info("seed.done", total=idx)
         print(f"\nSeeded {idx} cases across {len(offences)} offence types.")
-        print(f"  Default admin: admin / Aranmanai!Dev!2026")
+        print("  Default admin: admin / Aranmanai!Dev!2026")
         print(f"  District: {district}")
-        print(f"  Login: POST /api/v1/auth/login")
-        print(f"  Then: GET /api/v1/cms/calendar/today or GET /api/v1/cms/sp-dashboard")
+        print("  Login: POST /api/v1/auth/login")
+        print("  Then: GET /api/v1/cms/calendar/today or GET /api/v1/cms/sp-dashboard")
     finally:
         db.close()
 

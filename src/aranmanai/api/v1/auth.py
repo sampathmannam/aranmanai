@@ -5,10 +5,10 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from aranmanai.api.deps import AdminUser, CurrentUser, DbSession
+from aranmanai.config import get_settings
 from aranmanai.db.models.user import User, UserRole
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog, generate_token, hash_password, verify_password
-from aranmanai.config import get_settings
 
 log = get_logger(__name__)
 router = APIRouter()
@@ -45,7 +45,6 @@ def _audit() -> AuditLog:
 
 @router.post("/login", response_model=TokenResponse)
 def login(req: LoginRequest, db: DbSession) -> TokenResponse:
-    settings = get_settings()
     user = db.query(User).filter(User.username == req.username).first()
     if not user or not user.is_active or not verify_password(req.password, user.hashed_password):
         _audit().append(

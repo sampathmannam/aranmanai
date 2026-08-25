@@ -15,7 +15,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from aranmanai.config import get_settings
-from aranmanai.db import init_db, SessionLocal
+from aranmanai.db import SessionLocal, init_db
 from aranmanai.db.models.user import User, UserRole
 from aranmanai.observability import get_logger, setup_logging
 from aranmanai.security import encrypt_field, hash_password
@@ -61,9 +61,9 @@ def main() -> None:
     try:
         admin = ensure_admin(db)
         if admin:
-            print(f"\n*** Bootstrap admin created ***")
+            print("\n*** Bootstrap admin created ***")
             print(f"    username: {admin}")
-            print(f"    password: Aranmanai!Dev!2026  (CHANGE IMMEDIATELY)")
+            print("    password: Aranmanai!Dev!2026  (CHANGE IMMEDIATELY)")
             print(f"    district: {settings.district}\n")
     finally:
         db.close()

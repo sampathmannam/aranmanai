@@ -27,8 +27,7 @@ a verdict (READY | NEEDS_FIXES | BLOCKED).
 """
 from __future__ import annotations
 
-import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -36,7 +35,6 @@ from sqlalchemy.orm import Session
 
 from aranmanai.db.models.case import Case, CaseStage
 from aranmanai.db.models.evidence import Evidence
-from aranmanai.db.models.hearing import Hearing
 from aranmanai.db.models.witness import Witness
 from aranmanai.observability import get_logger
 
@@ -191,8 +189,6 @@ class ChargesheetVettingService:
         ))
 
         # 9. Charge sheet date / hearings (have we filed at least one hearing?)
-        hearings = self.db.query(Hearing).filter(Hearing.case_id == case_id).all()
-        n_hearings = len(hearings)
         # For chargesheet stage, hearings may or may not exist yet
         items.append(VettingItem(
             code="fir_charge_sheet_drafted",

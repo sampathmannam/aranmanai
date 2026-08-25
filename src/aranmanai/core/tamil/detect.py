@@ -14,9 +14,6 @@ Usage:
 """
 from __future__ import annotations
 
-import re
-from typing import Optional, Tuple
-
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
@@ -78,8 +75,8 @@ def detect_script(text: str) -> str:
 
 def detect_language(
     text: str,
-    fasttext_model_path: Optional[str] = None,
-) -> Tuple[str, float]:
+    fasttext_model_path: str | None = None,
+) -> tuple[str, float]:
     """Detect the language of `text`.
 
     Returns (lang_code, confidence) where lang_code is an ISO 639-1

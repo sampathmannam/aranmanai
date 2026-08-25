@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -49,7 +48,7 @@ class InvestigationRecommendationsService:
     def recommend(self, request: InvestigationRecommendationsRequest) -> InvestigationRecommendationsResponse:
         messages = build_investigation_prompt(
             case_id=request.case_id,
-            lapses=[l.model_dump() for l in request.lapses],
+            lapses=[lapse.model_dump() for lapse in request.lapses],
             case_facts=request.case_facts,
             evidence_list=request.evidence_list,
             witness_list=request.witness_list,

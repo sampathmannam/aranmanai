@@ -18,10 +18,10 @@ Design principles:
 - Works on RTX 2050 4GB (Whisper tiny/base/small) and CPU fallback
 - Tamil + English + Hindi out of the box (Whisper is trained on 99 languages)
 """
-from aranmanai.core.voice.vad import VoiceActivityDetector, detect_speech_segments, load_wav
+from aranmanai.core.voice.pipeline import PipelineResult, VoicePipeline, voice_to_text
 from aranmanai.core.voice.stt import SpeechToText, TranscriptionResult, transcribe_wav
 from aranmanai.core.voice.tts import TextToSpeech
-from aranmanai.core.voice.pipeline import VoicePipeline, voice_to_text, PipelineResult
+from aranmanai.core.voice.vad import VoiceActivityDetector, detect_speech_segments, load_wav
 
 __all__ = [
     "VoiceActivityDetector",

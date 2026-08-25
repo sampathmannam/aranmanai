@@ -4,10 +4,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from aranmanai.ai.services.risk_scoring import RiskScoreRequest, RiskScoreResponse, RiskScoringService
-from aranmanai.api.deps import CurrentUser, IoUser, SpUser
+from aranmanai.api.deps import IoUser
+from aranmanai.config import get_settings
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog
-from aranmanai.config import get_settings
 
 log = get_logger(__name__)
 router = APIRouter()

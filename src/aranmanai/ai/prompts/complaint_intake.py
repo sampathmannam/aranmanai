@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 from aranmanai.ai.llm_client import LLMMessage
-from aranmanai.ai.prompts._sanitize import delimit, sanitize_for_llm
-
+from aranmanai.ai.prompts._sanitize import delimit
 
 
 def build_complaint_intake_prompt(
