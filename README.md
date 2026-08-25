@@ -134,6 +134,12 @@ aranmanai/
 | Team | 1 SP + workstation | Lean solo | v2: 1 IO backup trained by month 6 |
 | Scale-out | No cloud | DPDP §8(4) compliance | All storage local; cloud only for anonymous aggregates |
 
+## Known limitations (v1)
+
+| Limitation | Detail |
+|---|---|
+| One login per browser | Streamlit keeps session state per browser (not per tab). Two different users logged in via separate tabs of the *same* browser will collide and can see/act as each other's session. Use separate browsers (or separate profiles/incognito windows) for concurrent users on one workstation. Not planned to be fixed in v1 — a real fix means moving off Streamlit's global session model, which isn't worth the risk at single-workstation scale. |
+
 ## License
 
 Proprietary. Internal use only. Not for redistribution.
