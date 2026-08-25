@@ -76,6 +76,10 @@ class WitnessPreparationService:
             "brief": response.brief,
             "questions": qns,
             "model": response.model,
+            # Real wall-clock seconds spent in the AI-generation call
+            # (LLM.complete only). Feeds the Month-3 drafting-time-reduction
+            # milestone measurement.
+            "elapsed_seconds": response.elapsed_seconds,
         }
 
     def mark_ready(self, witness_id: str, io_approved: bool = True) -> Witness:

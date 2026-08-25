@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from aranmanai.ai.factory import get_llm_client
 from aranmanai.ai.llm_client import LLMClient
 from aranmanai.ai.prompts.investigation import build_investigation_prompt
-from aranmanai.observability import get_logger
+from aranmanai.observability import Timer, get_logger
 
 log = get_logger(__name__)
 
@@ -35,6 +35,9 @@ class InvestigationRecommendationsResponse(BaseModel):
     recommendations: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     model: str
+    # Real wall-clock seconds spent in the AI-generation call (LLM.complete
+    # only). Feeds the Month-3 drafting-time-reduction milestone measurement.
+    elapsed_seconds: float = 0.0
 
 
 class InvestigationRecommendationsService:
@@ -52,6 +55,16 @@ class InvestigationRecommendationsService:
             witness_list=request.witness_list,
             language=request.language,
         )
-        response = self.llm.complete(messages, temperature=0.2, max_tokens=2048)
-        log.info("ai.investigation_recommendations", case_id=request.case_id, lapse_count=len(request.lapses))
-        return InvestigationRecommendationsResponse(recommendations=response.content, model=response.model)
+        with Timer() as t:
+            response = self.llm.complete(messages, temperature=0.2, max_tokens=2048)
+        log.info(
+            "ai.investigation_recommendations",
+            case_id=request.case_id,
+            lapse_count=len(request.lapses),
+            elapsed_seconds=t.elapsed_seconds,
+        )
+        return InvestigationRecommendationsResponse(
+            recommendations=response.content,
+            model=response.model,
+            elapsed_seconds=t.elapsed_seconds or 0.0,
+        )

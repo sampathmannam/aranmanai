@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from aranmanai.ai.factory import get_llm_client
 from aranmanai.ai.llm_client import LLMClient
 from aranmanai.ai.prompts.fir import build_fir_prompt
-from aranmanai.observability import get_logger
+from aranmanai.observability import Timer, get_logger
 
 log = get_logger(__name__)
 
@@ -36,6 +36,10 @@ class FirDraftResponse(BaseModel):
     model: str
     # Approval flag — every AI output must be approved by IO before persistence
     io_approved: bool = False
+    # Real wall-clock seconds spent in the AI-generation call (LLM.complete
+    # only — excludes request parsing / DB / audit I/O). Feeds the Month-3
+    # drafting-time-reduction milestone measurement.
+    elapsed_seconds: float = 0.0
 
 
 class FirDraftingService:
@@ -58,14 +62,17 @@ class FirDraftingService:
             io_name=request.io_name,
             language=request.language,
         )
-        response = self.llm.complete(messages, temperature=0.1, max_tokens=2048)
+        with Timer() as t:
+            response = self.llm.complete(messages, temperature=0.1, max_tokens=2048)
         log.info(
             "ai.fir_draft",
             tokens_in=response.prompt_tokens,
             tokens_out=response.completion_tokens,
             ps=request.police_station,
+            elapsed_seconds=t.elapsed_seconds,
         )
         return FirDraftResponse(
             fir_text=response.content,
             model=response.model,
+            elapsed_seconds=t.elapsed_seconds or 0.0,
         )

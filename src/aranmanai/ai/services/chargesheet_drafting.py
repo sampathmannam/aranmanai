@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from aranmanai.ai.factory import get_llm_client
 from aranmanai.ai.llm_client import LLMClient
 from aranmanai.ai.prompts.chargesheet import build_chargesheet_prompt
-from aranmanai.observability import get_logger
+from aranmanai.observability import Timer, get_logger
 
 log = get_logger(__name__)
 
@@ -35,6 +35,9 @@ class ChargesheetResponse(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     model: str
     io_approved: bool = False
+    # Real wall-clock seconds spent in the AI-generation call (LLM.complete
+    # only). Feeds the Month-3 drafting-time-reduction milestone measurement.
+    elapsed_seconds: float = 0.0
 
 
 class ChargesheetDraftingService:
@@ -58,6 +61,11 @@ class ChargesheetDraftingService:
             io_name=request.io_name,
             language=request.language,
         )
-        response = self.llm.complete(messages, temperature=0.1, max_tokens=4096)
-        log.info("ai.chargesheet_draft", case_id=request.case_id)
-        return ChargesheetResponse(chargesheet_text=response.content, model=response.model)
+        with Timer() as t:
+            response = self.llm.complete(messages, temperature=0.1, max_tokens=4096)
+        log.info("ai.chargesheet_draft", case_id=request.case_id, elapsed_seconds=t.elapsed_seconds)
+        return ChargesheetResponse(
+            chargesheet_text=response.content,
+            model=response.model,
+            elapsed_seconds=t.elapsed_seconds or 0.0,
+        )

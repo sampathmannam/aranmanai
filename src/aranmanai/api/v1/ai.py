@@ -63,6 +63,7 @@ def fir_draft(req: FirDraftRequest, user: IoUser) -> FirDraftResponse:
         actor_id=user.id,
         subject_id=result.draft_id,
         fields_used=["complainant_name", "incident_time", "location", "facts", "sections_bns"],
+        metadata={"elapsed_seconds": result.elapsed_seconds},
     )
     return result
 
@@ -75,6 +76,7 @@ def case_diary_draft(req: CaseDiaryRequest, user: IoUser) -> CaseDiaryResponse:
         AuditAction.AI_FIR_DRAFT,  # reuse enum; case-diary has no specific
         actor_id=user.id,
         subject_id=result.draft_id,
+        metadata={"elapsed_seconds": result.elapsed_seconds},
     )
     return result
 
@@ -87,6 +89,7 @@ def chargesheet_draft(req: ChargesheetRequest, user: IoUser) -> ChargesheetRespo
         AuditAction.AI_CHARGESHEET_DRAFT,
         actor_id=user.id,
         subject_id=result.draft_id,
+        metadata={"elapsed_seconds": result.elapsed_seconds},
     )
     return result
 
@@ -101,6 +104,7 @@ def investigation_recommendations(
         AuditAction.AI_INVESTIGATION_RECOMMENDATIONS,
         actor_id=user.id,
         subject_id=result.rec_id,
+        metadata={"elapsed_seconds": result.elapsed_seconds},
     )
     return result
 

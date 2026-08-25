@@ -191,7 +191,7 @@ def cross_exam_prep(
         actor_id=user.id,
         subject_id=witness_id,
         success=True,
-        metadata={"prep_id": result["prep_id"]},
+        metadata={"prep_id": result["prep_id"], "elapsed_seconds": result["elapsed_seconds"]},
     )
     return result
 

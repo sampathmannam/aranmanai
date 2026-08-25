@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from aranmanai.ai.factory import get_llm_client
 from aranmanai.ai.llm_client import LLMClient
 from aranmanai.ai.prompts.case_diary import build_case_diary_prompt
-from aranmanai.observability import get_logger
+from aranmanai.observability import Timer, get_logger
 
 log = get_logger(__name__)
 
@@ -30,6 +30,9 @@ class CaseDiaryResponse(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     model: str
     io_approved: bool = False
+    # Real wall-clock seconds spent in the AI-generation call (LLM.complete
+    # only). Feeds the Month-3 drafting-time-reduction milestone measurement.
+    elapsed_seconds: float = 0.0
 
 
 class CaseDiaryDraftingService:
@@ -48,6 +51,11 @@ class CaseDiaryDraftingService:
             investigation_steps=request.investigation_steps,
             language=request.language,
         )
-        response = self.llm.complete(messages, temperature=0.1, max_tokens=2048)
-        log.info("ai.case_diary_draft", case_id=request.case_id)
-        return CaseDiaryResponse(diary_entry=response.content, model=response.model)
+        with Timer() as t:
+            response = self.llm.complete(messages, temperature=0.1, max_tokens=2048)
+        log.info("ai.case_diary_draft", case_id=request.case_id, elapsed_seconds=t.elapsed_seconds)
+        return CaseDiaryResponse(
+            diary_entry=response.content,
+            model=response.model,
+            elapsed_seconds=t.elapsed_seconds or 0.0,
+        )
