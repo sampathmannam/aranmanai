@@ -45,6 +45,15 @@ _rate_lock = Lock()
 # P1 fix: per-route rate limits. Helpline + report get the strict
 # default; patrol dispatch needs to be able to send multiple units in
 # one minute during an active incident, so it gets a higher limit.
+#
+# v1.1 CAVEAT (Kishore review, item 6): the rate-limit state lives
+# in this Python process's memory. If Aranmanai is deployed with
+# N gunicorn/uvicorn workers, each worker has its own bucket, so the
+# effective per-IP limit is N * the per-worker limit. For the demo
+# (single uvicorn) and the v1 pilot (single VPS) this is fine; for
+# any multi-worker / multi-host deployment, swap this for slowapi
+# backed by Redis. See docs/MULTI_PROCESS_RATE_LIMIT.md (to be
+# written before the v1.2 multi-worker deployment).
 _RATE_LIMITS: dict = {
     "/helpline/call": 10,
     "/report": 10,
