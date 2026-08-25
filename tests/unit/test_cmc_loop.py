@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from aranmanai.core.time_utils import local_today
+
 
 @pytest.fixture
 def setup_users(db_session):
@@ -175,9 +177,12 @@ def test_daily_view(db_session, setup_users, setup_case):
         due_date=datetime.utcnow() + timedelta(hours=2),
         priority=ActionPriority.MEDIUM,
     )
-    # Match datetime.utcnow() (used above to create the meeting), not local
-    # date.today() -- see test_cms.py for why these can mismatch by a day.
-    today = datetime.utcnow().date()
+    # daily_view() takes a LOCAL (IST) calendar date and converts it to the
+    # matching naive-UTC range internally -- the date that correctly
+    # contains "right now" (when the action above was assigned via
+    # datetime.utcnow()) is local_today(), not datetime.utcnow().date()
+    # (see test_cms.py for why these can differ by a day).
+    today = local_today()
     v = svc.daily_view(district="test-district", target_date=today)
     assert v.district == "test-district"
     assert v.n_actions_pending >= 1

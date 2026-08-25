@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
+from aranmanai.core.time_utils import local_day_utc_range
 from aranmanai.db.models.case import Case, CaseStatus
 from aranmanai.db.models.hearing import Hearing
 from aranmanai.db.models.witness import WitnessCategory
@@ -44,9 +45,15 @@ class DailyCalendarService:
         self.db = db
 
     def for_date(self, target_date: date, district: str | None = None) -> list[DailyCalendarEntry]:
-        """All hearings on target_date, sorted by priority (critical first)."""
-        start = datetime.combine(target_date, datetime.min.time())
-        end = start + timedelta(days=1)
+        """All hearings on target_date (an India Standard Time calendar day),
+        sorted by priority (critical first).
+
+        Hearing.date is stored as naive UTC. `local_day_utc_range` converts
+        the IST calendar day into the equivalent naive-UTC instant range so
+        hearings in the ~5.5h IST/UTC offset window are bucketed into the
+        correct local day (see core/time_utils.py).
+        """
+        start, end = local_day_utc_range(target_date)
         stmt = (
             select(Hearing, Case)
             .join(Case, Hearing.case_id == Case.id)

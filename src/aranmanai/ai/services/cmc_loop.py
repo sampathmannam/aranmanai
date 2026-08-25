@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from aranmanai.core.time_utils import local_day_utc_range, local_today
 from aranmanai.db.models.case import Case
 from aranmanai.db.models.coordination import (
     ActionItem,
@@ -318,13 +319,18 @@ class CmcLoopService:
             self.db.refresh(existing)
             return existing
 
-        # Count today's actions + overdue
+        # Count today's actions + overdue. ActionItem.due_date is stored as
+        # naive UTC; review_date is the SP's local (IST) calendar day, so
+        # convert via local_day_utc_range rather than combining review_date
+        # with naive midnight (which would silently misclassify actions in
+        # the ~5.5h IST/UTC offset window -- see core/time_utils.py).
+        review_day_start, review_day_end = local_day_utc_range(review_date)
         action_count = (
             self.db.query(ActionItem)
             .filter(
                 ActionItem.case_id == case_id,
-                ActionItem.due_date >= datetime.combine(review_date, datetime.min.time()),
-                ActionItem.due_date < datetime.combine(review_date + timedelta(days=1), datetime.min.time()),
+                ActionItem.due_date >= review_day_start,
+                ActionItem.due_date < review_day_end,
             )
             .count()
         )
@@ -360,10 +366,13 @@ class CmcLoopService:
 
     def daily_view(self, district: str, target_date: date | None = None) -> DailyCmcView:
         """The full CMC morning view for the SP."""
-        target = target_date or date.today()
-        next_day = target + timedelta(days=1)
-        day_start = datetime.combine(target, datetime.min.time())
-        day_end = datetime.combine(next_day, datetime.min.time())
+        target = target_date or local_today()
+        # Hearing.date / ActionItem.due_date / ActionItem.answered_at are all
+        # stored as naive UTC; target is the SP's local (IST) calendar day.
+        # Use local_day_utc_range instead of combining target with naive
+        # midnight, which would silently misclassify records in the
+        # ~5.5h IST/UTC offset window (see core/time_utils.py).
+        day_start, day_end = local_day_utc_range(target)
 
         # Today's hearings (in this district)
         hearings = (
@@ -728,6 +737,12 @@ class CmcLoopService:
         from aranmanai.db.models.witness import Witness, WitnessCategory
 
         week_end_excl = week_start + timedelta(days=7)
+        # ActionItem.answered_at is stored as naive UTC; week_start /
+        # week_end_excl are local (IST) calendar days. Convert via
+        # local_day_utc_range instead of combining with naive midnight
+        # (see core/time_utils.py).
+        week_start_utc, _ = local_day_utc_range(week_start)
+        week_end_utc, _ = local_day_utc_range(week_end_excl)
         cases_in_district = (
             self.db.query(Case).filter(Case.district == district).all()
         )
@@ -761,8 +776,8 @@ class CmcLoopService:
                 self.db.query(ActionItem)
                 .filter(
                     ActionItem.case_id.in_(case_ids),
-                    ActionItem.answered_at >= datetime.combine(week_start, datetime.min.time()),
-                    ActionItem.answered_at < datetime.combine(week_end_excl, datetime.min.time()),
+                    ActionItem.answered_at >= week_start_utc,
+                    ActionItem.answered_at < week_end_utc,
                 )
                 .count()
             )

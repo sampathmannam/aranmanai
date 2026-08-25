@@ -11,6 +11,7 @@ from aranmanai.core.cms.bottleneck import BottleneckDetector
 from aranmanai.core.cms.daily_calendar import DailyCalendarService
 from aranmanai.core.cms.sp_dashboard import SpDashboardService
 from aranmanai.core.cms.timeline import TimelineService
+from aranmanai.core.time_utils import local_today
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
@@ -24,7 +25,7 @@ def today_calendar(
     district: str | None = None,
 ) -> list[dict[str, Any]]:
     svc = DailyCalendarService(db)
-    return [e.__dict__ for e in svc.for_date(date.today(), district=district)]
+    return [e.__dict__ for e in svc.for_date(local_today(), district=district)]
 
 
 @router.get("/calendar/date/{target_date}")
@@ -45,7 +46,7 @@ def week_calendar(
     start: date | None = None,
     district: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    start = start or date.today()
+    start = start or local_today()
     svc = DailyCalendarService(db)
     out = svc.for_week(start, district=district)
     return {d.isoformat(): [e.__dict__ for e in entries] for d, entries in out.items()}

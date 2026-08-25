@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from aranmanai.core.time_utils import local_today
+
 
 def _make_case_with_hearing(db, test_user, days_ahead: int = 0, hostile_witnesses: int = 0,
                             risk: float | None = None):
@@ -39,11 +41,13 @@ def test_daily_calendar_for_date_returns_today_hearings(db_session, test_user):
 
     from aranmanai.core.cms.daily_calendar import DailyCalendarService
     svc = DailyCalendarService(db_session)
-    # _make_case_with_hearing stamps the hearing via datetime.utcnow(); using
-    # date.today() (local time) here would mismatch by a day for ~5.5h of
-    # every 24h on an IST-clock machine (00:00-05:30 IST is still the
-    # previous UTC day) -- match the same clock the fixture data used.
-    entries = svc.for_date(datetime.utcnow().date(), district="test-district")
+    # _make_case_with_hearing stamps the hearing via datetime.utcnow() (i.e.
+    # "right now"). for_date() takes a LOCAL (IST) calendar date and converts
+    # it to the matching naive-UTC range internally (see core/time_utils.py),
+    # so the date that correctly contains "right now" is local_today(), not
+    # datetime.utcnow().date() (which is the UTC calendar date and can be a
+    # different day for up to ~5.5h of every 24h, since IST is UTC+5:30).
+    entries = svc.for_date(local_today(), district="test-district")
     assert len(entries) == 1
     e = entries[0]
     assert e.fir_no == "100/2026"
@@ -55,7 +59,7 @@ def test_calendar_priority_critical_when_hostile_unprepped(db_session, test_user
 
     from aranmanai.core.cms.daily_calendar import DailyCalendarService
     svc = DailyCalendarService(db_session)
-    entries = svc.for_date(datetime.utcnow().date(), district="test-district")
+    entries = svc.for_date(local_today(), district="test-district")
     assert len(entries) == 1
     assert entries[0].priority == "critical"
     assert entries[0].hostile_witnesses == 2
@@ -67,7 +71,7 @@ def test_calendar_priority_high_when_risk_above_50(db_session, test_user):
 
     from aranmanai.core.cms.daily_calendar import DailyCalendarService
     svc = DailyCalendarService(db_session)
-    entries = svc.for_date(datetime.utcnow().date(), district="test-district")
+    entries = svc.for_date(local_today(), district="test-district")
     assert entries[0].priority == "high"
 
 
@@ -76,7 +80,7 @@ def test_calendar_district_filter(db_session, test_user):
 
     from aranmanai.core.cms.daily_calendar import DailyCalendarService
     svc = DailyCalendarService(db_session)
-    other = svc.for_date(datetime.utcnow().date(), district="other-district")
+    other = svc.for_date(local_today(), district="other-district")
     assert len(other) == 0
 
 
@@ -130,8 +134,8 @@ def test_sp_dashboard_snapshot_basic(db_session, test_user):
     _make_case_with_hearing(db_session, test_user, days_ahead=0)
     svc = SpDashboardService(db_session)
     # See test_daily_calendar_for_date_returns_today_hearings for why this
-    # must match datetime.utcnow(), not local date.today().
-    snap = svc.snapshot(district="test-district", as_of=datetime.utcnow().date())
+    # must be the local (IST) calendar date, not datetime.utcnow().date().
+    snap = svc.snapshot(district="test-district", as_of=local_today())
     assert snap.today_hearings == 1
     assert snap.district == "test-district"
     assert isinstance(snap.top_actions, list)

@@ -16,13 +16,14 @@ Endpoints:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from aranmanai.api.deps import CurrentUser, DbSession
 from aranmanai.config import get_settings
+from aranmanai.core.time_utils import local_day_utc_range, local_today
 from aranmanai.db.models.case import Case, CaseStage, CaseStatus
 from aranmanai.db.models.hearing import Hearing
 from aranmanai.db.models.witness import Witness, WitnessPrepStatus
@@ -99,9 +100,9 @@ class DailyReviewResponse(BaseModel):
 
 @router.get("/daily-review", response_model=DailyReviewResponse)
 def get_daily_review(
+    user: CurrentUser,
+    db: DbSession,
     target_date: str | None = None,  # YYYY-MM-DD, default = today
-    user: CurrentUser = None,
-    db: DbSession = None,
 ) -> DailyReviewResponse:
     """SP's daily review: today's hearings with full coordination status.
 
@@ -112,20 +113,23 @@ def get_daily_review(
     - For each hearing, whether PP / defense / accused are confirmed
     - What action items the SP needs to push today
     """
-    if not target_date:
-        target_date = datetime.utcnow().date().isoformat()
-
+    target = date.fromisoformat(target_date) if target_date else local_today()
     district = user.district
 
-    # All hearings for this district on this date
-    from sqlalchemy import func
-    target_day = datetime.fromisoformat(target_date)
+    # All hearings for this district on this local (IST) calendar day.
+    # Hearing.date is stored as naive UTC; local_day_utc_range converts the
+    # IST calendar day into the equivalent UTC instant range so hearings in
+    # the ~5.5h IST/UTC offset window are bucketed into the correct day
+    # (the previous func.date(Hearing.date) == target.date() comparison
+    # matched the UTC calendar day instead -- see core/time_utils.py).
+    day_start_utc, day_end_utc = local_day_utc_range(target)
     hearings = (
         db.query(Hearing)
         .join(Case, Hearing.case_id == Case.id)
         .filter(
             Case.district == district,
-            func.date(Hearing.date) == target_day.date(),
+            Hearing.date >= day_start_utc,
+            Hearing.date < day_end_utc,
         )
         .all()
     )
@@ -148,35 +152,35 @@ def get_daily_review(
         hostile = 0
         ready = 0
         need_call = 0
-        for w in c.witnesses:
-            wname = decrypt_field(w.name_encrypted) or "(encrypted)"
+        for witness in c.witnesses:
+            wname = decrypt_field(witness.name_encrypted) or "(encrypted)"
             # Per-hearing production: for v1 we use the witness_ids_present list
             production = "unknown"
-            if h.witness_ids_present and w.id in h.witness_ids_present:
+            if h.witness_ids_present and witness.id in h.witness_ids_present:
                 production = "appeared"
             # Days since last contact
             days_since = None
             needs_call_flag = False
-            if w.last_contact:
-                days_since = (datetime.utcnow() - w.last_contact).days
+            if witness.last_contact:
+                days_since = (datetime.utcnow() - witness.last_contact).days
             # Uncontacted in 7 days AND not yet ready = need to call
-            if w.prep_status not in (
+            if witness.prep_status not in (
                 WitnessPrepStatus.READY, WitnessPrepStatus.TESTIFIED,
             ) and (days_since is None or days_since >= 7):
                 needs_call_flag = True
                 need_call += 1
                 if days_since is None:
                     uncontacted += 1
-            if w.category.value == "hostile":
+            if witness.category.value == "hostile":
                 hostile += 1
-            if w.prep_status == WitnessPrepStatus.READY:
+            if witness.prep_status == WitnessPrepStatus.READY:
                 ready += 1
             witnesses_data.append(DailyReviewWitness(
-                witness_id=w.id,
+                witness_id=witness.id,
                 name=wname,
-                type=w.type.value,
-                category=w.category.value,
-                prep_status=w.prep_status.value,
+                type=witness.type.value,
+                category=witness.category.value,
+                prep_status=witness.prep_status.value,
                 production_status=production,
                 transport_arranged=False,
                 last_contact=days_since.__str__() + " days ago" if days_since is not None else "never",
@@ -206,9 +210,12 @@ def get_daily_review(
 
         # Action items
         actions: list[str] = []
-        for w in witnesses_data:
-            if w.needs_call:
-                actions.append(f"Call witness {w.name[:20]}... (last contact: {w.last_contact})")
+        for review_witness in witnesses_data:
+            if review_witness.needs_call:
+                actions.append(
+                    f"Call witness {review_witness.name[:20]}... "
+                    f"(last contact: {review_witness.last_contact})"
+                )
                 n_need_call += 1
         if h.pp_present is False:
             actions.append("Confirm PP availability with Public Prosecutor")
@@ -251,7 +258,7 @@ def get_daily_review(
     review_hearings.sort(key=lambda h: (risk_order.get(h.bottleneck_risk, 3), h.date))
 
     return DailyReviewResponse(
-        date=target_date,
+        date=target.isoformat(),
         district=district,
         n_hearings=len(review_hearings),
         n_critical=n_critical,

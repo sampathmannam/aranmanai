@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from aranmanai.core.time_utils import local_day_utc_range, local_today
+
 
 def test_calendar_today_empty(client):
     r = client.get("/api/v1/cms/calendar/today?district=test-district")
@@ -14,11 +16,18 @@ def test_calendar_for_date_with_case(client):
     payload = {"fir_no": "CAL/2026", "district": "test-district"}
     r = client.post("/api/v1/cases", json=payload)
     case_id = r.json()["id"]
-    tomorrow = (datetime.utcnow() + timedelta(days=1)).isoformat()
+    # The calendar endpoint's target_date is a LOCAL (IST) calendar date
+    # that for_date() converts to the matching naive-UTC range internally
+    # (see core/time_utils.py). Schedule the hearing safely inside the
+    # middle of that local day (in naive-UTC terms) so the test can't flake
+    # near the ~5.5h IST/UTC offset boundary.
+    target_local_date = local_today() + timedelta(days=1)
+    day_start_utc, _ = local_day_utc_range(target_local_date)
+    hearing_at = (day_start_utc + timedelta(hours=12)).isoformat()
     client.post("/api/v1/hearings", json={
-        "case_id": case_id, "date": tomorrow, "stage": "hearing",
+        "case_id": case_id, "date": hearing_at, "stage": "hearing",
     })
-    target_date = (datetime.utcnow() + timedelta(days=1)).date().isoformat()
+    target_date = target_local_date.isoformat()
     r2 = client.get(f"/api/v1/cms/calendar/date/{target_date}?district=test-district")
     assert r2.status_code == 200
     entries = r2.json()

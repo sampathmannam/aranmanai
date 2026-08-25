@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from aranmanai.core.cms.bottleneck import BottleneckDetector
 from aranmanai.core.cms.daily_calendar import DailyCalendarService
+from aranmanai.core.time_utils import local_today
 from aranmanai.db.models.case import Case, CaseStatus
 from aranmanai.db.models.witness import Witness, WitnessCategory
 from aranmanai.observability import get_logger
@@ -48,7 +49,7 @@ class SpDashboardService:
         self.bottleneck = BottleneckDetector(db)
 
     def snapshot(self, district: str, as_of: date | None = None) -> SpDashboardSnapshot:
-        as_of = as_of or date.today()
+        as_of = as_of or local_today()
         now = datetime.utcnow()
 
         calendar = self.calendar.for_date(as_of, district=district)

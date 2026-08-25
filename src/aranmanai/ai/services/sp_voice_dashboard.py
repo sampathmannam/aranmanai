@@ -23,6 +23,7 @@ from aranmanai.ai.llm_client import LLMClient
 from aranmanai.core.cms.bottleneck import BottleneckDetector
 from aranmanai.core.cms.daily_calendar import DailyCalendarService
 from aranmanai.core.cms.sp_dashboard import SpDashboardService
+from aranmanai.core.time_utils import local_today
 from aranmanai.db.session import SessionLocal
 from aranmanai.observability import get_logger
 
@@ -133,27 +134,35 @@ class SpVoiceDashboardService:
         db = SessionLocal()
         try:
             from datetime import date
-            target = date.today() if not target_date or target_date == "today" else date.fromisoformat(target_date)
+            target = local_today() if not target_date or target_date == "today" else date.fromisoformat(target_date)
             svc = DailyCalendarService(db)
             entries = svc.for_date(target, district=district)
 
             if not entries:
                 return f"No hearings scheduled for {target.isoformat()}.", []
 
+            # DailyCalendarEntry carries no "stuck" concept of its own -- that
+            # lives in BottleneckDetector. Cross-reference by case_id so a
+            # hearing that is ALSO a stuck case still surfaces the escalation
+            # (preserves the feature the old, nonexistent e.case_stuck /
+            # e.days_since_last attributes were trying to express).
+            bottlenecks = BottleneckDetector(db).detect(district=district)
+            stuck_by_case = {b.case_id: b for b in bottlenecks}
+
             lines = [f"Today's hearings — {target.isoformat()} — {len(entries)} case(s):\n"]
             actions: list[str] = []
 
             for e in entries:
-                priority_icon = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW"}.get(
-                    e.priority, "MEDIUM"
-                )
-                lines.append(f"- {e.fir_no} [{priority_icon}] at {e.time}: {e.court or 'court TBC'}")
+                priority_icon = e.priority.upper()
+                hearing_time = e.hearing_date.strftime("%H:%M")
+                lines.append(f"- {e.fir_no} [{priority_icon}] at {hearing_time}: {e.docket_label or 'court TBC'}")
                 if e.hostile_witnesses > 0:
-                    lines.append(f"  {e.hostile_witnesses} hostile witness(es), {e.ready_witnesses} ready")
+                    lines.append(f"  {e.hostile_witnesses} hostile witness(es), {e.prepared_witnesses} prepared")
                     actions.append(f"SP: call IO — {e.fir_no} has {e.hostile_witnesses} hostile witness(es)")
-                if e.case_stuck:
-                    lines.append(f"  STUCK — last hearing {e.days_since_last} days ago")
-                    actions.append(f"SP: escalate {e.fir_no} — stuck {e.days_since_last} days")
+                stuck = stuck_by_case.get(e.case_id)
+                if stuck:
+                    lines.append(f"  STUCK — {stuck.days_in_stage} days at {stuck.case_stage}")
+                    actions.append(f"SP: escalate {e.fir_no} — stuck {stuck.days_in_stage} days")
 
             summary = "\n".join(lines)
             return summary, actions[:5]
@@ -174,9 +183,9 @@ class SpVoiceDashboardService:
             actions: list[str] = []
 
             for b in bottlenecks[:10]:
-                lines.append(f"- {b.fir_no}: {b.reason} [{b.severity.upper()}]")
+                lines.append(f"- {b.fir_no}: {b.suggested_action} [{b.severity.upper()}]")
                 if b.severity == "critical":
-                    actions.append(f"SP: immediate action — {b.fir_no}: {b.reason}")
+                    actions.append(f"SP: immediate action — {b.fir_no}: {b.suggested_action}")
 
             return "\n".join(lines), actions[:5]
         finally:
