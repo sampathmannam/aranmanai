@@ -96,6 +96,25 @@ class Case(Base):
     risk_score: Mapped[float | None] = mapped_column(nullable=True)  # 0-1, advisory
     risk_score_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # F2: BNS 173 charge-sheet deadline (60/90 days from fir_date)
+    charge_sheet_deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    charge_sheet_filed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    max_sentence_years: Mapped[int | None] = mapped_column(Integer, nullable=True)  # for deadline calc
+
+    # F6: pilot enrollment (consolidates PilotCase into Case)
+    pilot_flag: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
+    pilot_enrolled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    pilot_baseline_p_conviction: Mapped[float | None] = mapped_column(nullable=True)
+
+    # F12: 1091/181 helpline upstream reference
+    helpline_upstream_ref: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    helpline_upstream_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # F7: Multilingual case entry (Tamil/Hindi original + English translation)
+    facts_text_ta: Mapped[str | None] = mapped_column(Text, nullable=True)
+    facts_text_hi: Mapped[str | None] = mapped_column(Text, nullable=True)
+    facts_text_translated: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Free-form notes (encrypted at the application layer)
     sp_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 

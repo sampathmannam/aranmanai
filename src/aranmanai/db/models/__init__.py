@@ -23,6 +23,16 @@ from aranmanai.db.models.safety import (
     AnonymousReport,
     PatrolDispatch,
 )
+from aranmanai.db.models.kishore_review import (
+    HelplineCallGPS,
+    ChargeSheetDeadline,
+    ChargeSheetVersion,
+    CaseTransfer,
+    CaseFamilyLiaison,
+    HelplineUpstreamRef,
+    PPBriefing,
+    Deputation,
+)
 
 __all__ = [
     "Case", "CaseStatus", "CaseStage",
@@ -45,4 +55,12 @@ __all__ = [
     "HelplineCall",
     "AnonymousReport",
     "PatrolDispatch",
+    "HelplineCallGPS",
+    "ChargeSheetDeadline",
+    "ChargeSheetVersion",
+    "CaseTransfer",
+    "CaseFamilyLiaison",
+    "HelplineUpstreamRef",
+    "PPBriefing",
+    "Deputation",
 ]

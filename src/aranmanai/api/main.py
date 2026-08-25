@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from aranmanai.api.v1 import ai, auth, cases, cmc, cms, coordination, dpdp, hearings, pilot, risk, safety, vetting, witnesses
+from aranmanai.api.v1 import ai, auth, cases, cmc, cms, coordination, dpdp, hearings, kishore_review, pilot, risk, safety, vetting, witnesses
 from aranmanai.api import tamil, voice
 from aranmanai.config import get_settings
 from aranmanai.db import init_db
@@ -92,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(safety.router, prefix="/api/v1", tags=["citizen-safety"])
     app.include_router(voice.router, prefix="/api/v1", tags=["voice"])
     app.include_router(tamil.router, prefix="/api/v1", tags=["tamil"])
+    app.include_router(kishore_review.router, prefix="/api/v1", tags=["kishore-review"])
 
     # Global error handlers — must register before app is returned
     app.add_exception_handler(IntegrityError, _integrity_handler)

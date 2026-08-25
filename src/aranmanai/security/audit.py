@@ -76,6 +76,21 @@ class AuditAction(str, Enum):
     LOGOUT = "auth.logout"
     LOGIN_FAILED = "auth.login_failed"
 
+    # F10: Case lifecycle (transfers, IO/PP changes)
+    TRANSFER_CASE = "case.transfer"
+    CHANGE_IO = "case.change_io"
+    CHANGE_PP = "case.change_pp"
+    FILE_CHARGESHEET = "case.chargesheet_filed"
+    GRANT_BAIL = "case.bail"
+
+    # F12: Helpline upstream integration (1091/181)
+    HELPLINE_UPSTREAM = "safety.helpline_upstream"
+    HELPLINE_FAMILY_LIAISON = "case.family_liaison"
+
+    # F14: Deputation
+    CREATE_DEPUTATION = "deputation.create"
+    END_DEPUTATION = "deputation.end"
+
     # Data subject rights (DPDP §12)
     EXPORT_DATA = "dpdp.export"
     DELETE_DATA = "dpdp.delete"
