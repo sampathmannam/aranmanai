@@ -5,6 +5,21 @@
 **Codebase audited**: `src/aranmanai/frontend/{app.py, voice_tab.py, tamil_tab.py}`
 **Total findings**: 29 (5 Wiring, 8 State, 8 UI, 8 Flow)
 
+> **Status update 2026-08-26**: essentially all findings are now fixed. The two
+> that had no evidence of a fix as of 2026-08-26 — U-2's "recover the full value
+> in the body" half, and F-8 (debounce) — are now fixed too, along with a second
+> undocumented `st.json()` PII leak this pass's regression-test sweep found in
+> the AI Assist tab (see U-4 below). Most fixes from 2026-08-25 previously had
+> zero automated regression coverage; 33 new tests were added across 8 new files
+> under `tests/frontend/` to lock in W-1/W-2, S-6, S-8, U-2, U-4, U-5, U-6, U-7,
+> and F-8. U-7 (focus-ring CSS) can only be asserted at the "CSS is injected and
+> contains the right selector" level — Streamlit's `AppTest` framework has no
+> real DOM/browser, so true visible-focus-ring verification isn't possible here.
+> Not attempted: F-3/F-4/F-6-adjacent full mobile responsiveness (U-3, tracked
+> separately, not part of this pass's scope) and F-11's stated "already done, but
+> a race window remains" caveat (unchanged — still a real theoretical race, low
+> severity, unresolved).
+
 ---
 
 ## PHASE 1 — Dead Code & Broken Wiring
@@ -432,6 +447,12 @@ with st.expander(f"{color} {short_fir} — {h['case_stage']} — {priority.upper
     ...
 ```
 
+**Status: FIXED (header-truncation 2026-08-25 via `_short()`; body-recovery
+2026-08-26 via `_full_if_truncated()`).** The 2026-08-25 fix truncated every
+expander header but never added the recommended "show full in body" half —
+this pass added `_full_if_truncated()`, wired into all 6 relevant expander
+bodies, plus a regression test (`tests/frontend/test_expander_truncation.py`).
+
 ---
 
 ### 🔵 [UI] U-3: Hardcoded `st.columns(5)` doesn't reflow on mobile
@@ -476,6 +497,17 @@ with st.expander(f"{c['fir_no']} — {c['status']} / {c['stage']}"):
     st.write(f"**IO:** {c.get('io_username', '—')}")
     st.write(f"**PP:** {c.get('pp_username', '—')}")
 ```
+
+**Status: FIXED (Cases tab 2026-08-25; a second, undocumented instance of the
+same anti-pattern found and fixed 2026-08-26).** The original Cases-tab
+`st.json(c)` was replaced with a structured view as recommended. This pass's
+regression-test sweep (`tests/frontend/test_pii_display.py`) found the AI
+Assist tab's "show last result" replay had its own separate `st.json(last)`
+call (`render_ai_assist()`) — never named in this audit, leaking
+complainant names/contacts/case facts from `drafted_fir`/`structured`/
+`narrative`/`questions` fields. Both the fresh-submit and cached-replay paths
+were refactored into one `_render_ai_result()` helper; a blanket grep now
+confirms zero `st.json(` calls remain anywhere in `src/aranmanai/frontend/`.
 
 ---
 
@@ -701,6 +733,14 @@ else:
 **Impact**: Slow on poor networks. No functional bug, just performance.
 
 **Remediation**: Add a `st.session_state.last_tab` and only re-fetch if it changed (Streamlit already does this with `st.session_state` but the API call still fires on every render).
+
+**Status: FIXED (2026-08-26).** Added `api_get_cached()` — a 2-second TTL cache
+keyed by GET path, applied to the 5 tab-rendering GET calls. Any mutating
+(`POST`/`PATCH`) request clears the whole cache, so the W-5/S-1/S-2
+refresh-after-mutation behavior is never masked by a stale cache hit — verified
+by a test showing the daily-view fetch count go 1→2 across a "Mark reviewed"
+click, while an idle revisit within the window stays at 1 call
+(`tests/frontend/test_debounce.py`).
 
 ---
 
