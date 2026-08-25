@@ -18,6 +18,11 @@ env/
 .DS_Store
 Thumbs.db
 
+# One-off verification artifacts (race tests, smoke runs, etc.)
+race_test_result.txt
+smoke_test_result.txt
+*_result.txt
+
 # Data (case data, audit logs - never commit)
 data/
 *.db
