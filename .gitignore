@@ -22,6 +22,9 @@ Thumbs.db
 race_test_result.txt
 smoke_test_result.txt
 *_result.txt
+*.tmp
+*.tmp2
+verify_migration*
 
 # Data (case data, audit logs - never commit)
 data/

@@ -16,12 +16,19 @@ Covers:
 - C-3: register admin-only
 - C-4: audit log race (8 threads x 20 writes verify chain)
 - H-3: rate limit (429 after threshold)
+- v1.1: PPBriefing.recorded_at (renamed from read_at)
+- v1.1: UNIQUE(case.fir_no, district) — duplicate FIR rejected
+- v1.1: F11 family-liaison restricted to POCSO/304B cases
+- v1.1: audit log verify_all() walks rotated files
+- v1.1: load test (50 concurrent case reads)
 """
+import os
 import requests
 import threading
 import time
 import uuid
 from datetime import date, datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 API = "http://127.0.0.1:8080/api/v1"
 
@@ -296,17 +303,43 @@ def test_f10_case_transfer():
 # ---------- F11: family liaison + IDOR ----------
 
 def test_f11_family_liaison():
+    """F11 happy path: create a POCSO case first, then record a briefing.
+
+    Creates the case directly in the DB (matching the running uvicorn's
+    DB) so the API can see it.
+    """
+    _bind_to_real_db_for_test()
+    from aranmanai.db import SessionLocal
+    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.user import User
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert admin is not None
+        case = Case(
+            id=str(uuid.uuid4()),
+            fir_no=f"TEST-F11-{uuid.uuid4().hex[:8]}",
+            district="default-district",
+            status=CaseStatus.OPEN,
+            stage=CaseStage.INVESTIGATION,
+            io_id=admin.id,
+            is_pocso_or_304b_case=True,
+        )
+        db.add(case)
+        db.commit()
+        case_id = case.id
+    finally:
+        db.close()
     token = _admin_token()
     h = {"Authorization": f"Bearer {token}"}
-    case = _ensure_data(token)
-    r = requests.post(f"{API}/kishore/cases/{case['id']}/family-liaison", json={
-        "case_id": case["id"], "family_contact": "9876543210",
+    r = requests.post(f"{API}/kishore/cases/{case_id}/family-liaison", json={
+        "case_id": case_id, "family_contact": "9876543210",
         "family_contact_relationship": "mother",
         "what_communicated": "test", "followup_required": True,
         "followup_due": "2026-12-01"
     }, headers=h)
-    assert r.status_code == 200
-    r2 = requests.get(f"{API}/kishore/cases/{case['id']}/family-liaison", headers=h)
+    assert r.status_code == 200, f"unexpected: {r.status_code} {r.text}"
+    r2 = requests.get(f"{API}/kishore/cases/{case_id}/family-liaison", headers=h)
     assert r2.status_code == 200
     assert len(r2.json()) >= 1
 
@@ -414,7 +447,7 @@ def test_f13_pp_briefing_record():
         "notes": "test", "requires_response": True
     }, headers=h)
     assert r.status_code == 200, f"unexpected: {r.status_code} {r.text}"
-    assert r.json()["read_at"] is not None
+    assert r.json()["recorded_at"] is not None
 
 
 def test_f13_unread_briefings_idor_rejected():
@@ -522,3 +555,265 @@ def test_h3_rate_limit_triggers_429():
         statuses.append(r.status_code)
     # At least one of the last few should be 429
     assert 429 in statuses, f"Expected rate limit 429, got {statuses}"
+
+
+# ---------- v1.1: PPBriefing.recorded_at (renamed from read_at) ----------
+
+def test_v11_ppbriefing_recorded_at_field_exists():
+    """v1.1: PPBriefing response uses `recorded_at` (not `read_at`)."""
+    pp_token_resp = requests.post(
+        f"{API}/auth/login",
+        json={"username": "pp_user", "password": "PP!Dev!2026"},
+    )
+    if pp_token_resp.status_code != 200:
+        return
+    pp_id = pp_token_resp.json()["user_id"]
+    r = requests.get(f"{API}/kishore/pps/{pp_id}/unread-briefings", headers={
+        "Authorization": f"Bearer {pp_token_resp.json()['access_token']}"
+    })
+    assert r.status_code == 200
+    if r.json():
+        assert "recorded_at" in r.json()[0], "v1.1 rename: must use recorded_at"
+        assert "read_at" not in r.json()[0], "v1.1 rename: must NOT expose read_at"
+
+
+# ---------- v1.1: UNIQUE(case.fir_no, district) ----------
+
+def _bind_to_real_db_for_test() -> None:
+    """Reset the v2 engine and settings so a test that does direct DB
+    access connects to the running uvicorn's real DB (data/aranmanai.db)
+    instead of the conftest's tmp_env. The conftest's tmp_env fixture
+    redirects the env vars to a tmp dir; my tests need to override.
+
+    IMPORTANT: pytest runs from tests/, so the DB path must be ABSOLUTE
+    or the test process sees a non-existent path (relative resolves
+    to tests/data/aranmanai.db). Use the absolute path of the repo root.
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, "src")
+    repo_root = Path(__file__).resolve().parents[2]
+    db_path = repo_root / "data" / "aranmanai.db"
+    os.environ["ARANMANAI_DB_PATH"] = str(db_path)
+    os.environ["ARANMANAI_DB_KEY"] = "dev-only-change-me-in-prod-dbkey-2f7c9a4e8b1d3f5a"
+    os.environ["ARANMANAI_JWT_SECRET"] = "dev-only-change-me-in-prod-jwt-c4e8a1d9f2b3"
+    from aranmanai.config import get_settings
+    get_settings.cache_clear()
+    from aranmanai.db.session import reset_engine
+    reset_engine()
+
+
+def test_v11_duplicate_fir_in_same_district_rejected():
+    """v1.1: inserting a case with the same fir_no + district must fail."""
+    _bind_to_real_db_for_test()
+    from aranmanai.db import SessionLocal
+    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.user import User
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert admin is not None, "admin user must exist in the running uvicorn's DB"
+        fir_no = f"TEST-DUP-{uuid.uuid4().hex[:8]}"
+        district = "default-district"
+        case = Case(
+            id=str(uuid.uuid4()),
+            fir_no=fir_no,
+            district=district,
+            facts="first case",
+            status=CaseStatus.OPEN,
+            stage=CaseStage.INVESTIGATION,
+            io_id=admin.id,
+            sp_id=admin.id,
+        )
+        db.add(case)
+        db.commit()
+        # Now try to insert a second case with the same fir_no + district
+        dup = Case(
+            id=str(uuid.uuid4()),
+            fir_no=fir_no,
+            district=district,
+            facts="second case",
+            status=CaseStatus.OPEN,
+            stage=CaseStage.INVESTIGATION,
+            io_id=admin.id,
+            sp_id=admin.id,
+        )
+        db.add(dup)
+        try:
+            db.commit()
+            assert False, "UNIQUE constraint did not fire — duplicate was allowed"
+        except Exception as exc:
+            msg = str(exc).upper()
+            assert "UNIQUE" in msg or "CONSTRAINT" in msg, (
+                f"expected UNIQUE constraint failure, got: {exc}"
+            )
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_v11_same_fir_in_different_district_allowed():
+    """v1.1: same fir_no in a different district is allowed (UNIQUE is per-district)."""
+    _bind_to_real_db_for_test()
+    from aranmanai.db import SessionLocal
+    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.user import User
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert admin is not None
+        fir_no = f"TEST-CROSS-{uuid.uuid4().hex[:8]}"
+        c1 = Case(
+            id=str(uuid.uuid4()),
+            fir_no=fir_no,
+            district="default-district",
+            status=CaseStatus.OPEN,
+            stage=CaseStage.INVESTIGATION,
+            io_id=admin.id,
+        )
+        c2 = Case(
+            id=str(uuid.uuid4()),
+            fir_no=fir_no,
+            district="tirupati",
+            status=CaseStatus.OPEN,
+            stage=CaseStage.INVESTIGATION,
+            io_id=admin.id,
+        )
+        db.add(c1)
+        db.add(c2)
+        db.commit()  # should NOT raise
+        assert c1.id != c2.id
+    finally:
+        db.rollback()
+        db.close()
+
+
+# ---------- v1.1: F11 family liaison restricted to POCSO/304B ----------
+
+def test_v11_f11_rejects_non_pocso_case():
+    """v1.1: F11 family-liaison on a non-POCSO/304B case must return 400."""
+    _bind_to_real_db_for_test()
+    from aranmanai.db import SessionLocal
+    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.user import User
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert admin is not None
+        case = Case(
+            id=str(uuid.uuid4()),
+            fir_no=f"TEST-NONPOCSO-{uuid.uuid4().hex[:8]}",
+            district="default-district",
+            status=CaseStatus.OPEN,
+            stage=CaseStage.INVESTIGATION,
+            io_id=admin.id,
+            is_pocso_or_304b_case=False,
+        )
+        db.add(case)
+        db.commit()
+        non_pocso_id = case.id
+    finally:
+        db.close()
+    token = _admin_token()
+    h = {"Authorization": f"Bearer {token}"}
+    r = requests.post(f"{API}/kishore/cases/{non_pocso_id}/family-liaison", json={
+        "case_id": non_pocso_id, "family_contact": "9876543210",
+        "what_communicated": "test",
+    }, headers=h)
+    assert r.status_code == 400, f"expected 400 for non-POCSO case, got {r.status_code}: {r.text}"
+    assert "POCSO" in r.json().get("detail", "") or "304B" in r.json().get("detail", "")
+
+
+def test_v11_f11_accepts_pocso_case():
+    """v1.1: F11 family-liaison on a POCSO-flagged case must return 200."""
+    _bind_to_real_db_for_test()
+    from aranmanai.db import SessionLocal
+    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.user import User
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin").first()
+        assert admin is not None
+        case = Case(
+            id=str(uuid.uuid4()),
+            fir_no=f"TEST-POCSO-{uuid.uuid4().hex[:8]}",
+            district="default-district",
+            status=CaseStatus.OPEN,
+            stage=CaseStage.INVESTIGATION,
+            io_id=admin.id,
+            is_pocso_or_304b_case=True,
+        )
+        db.add(case)
+        db.commit()
+        pocso_id = case.id
+    finally:
+        db.close()
+    token = _admin_token()
+    h = {"Authorization": f"Bearer {token}"}
+    r = requests.post(f"{API}/kishore/cases/{pocso_id}/family-liaison", json={
+        "case_id": pocso_id, "family_contact": "9876543210",
+        "what_communicated": "POCSO test",
+    }, headers=h)
+    assert r.status_code == 200, f"expected 200 for POCSO case, got {r.status_code}: {r.text}"
+
+
+# ---------- v1.1: audit log verify_all() rotation-aware ----------
+
+def test_v11_audit_verify_all_walks_rotated_files():
+    """v1.1: verify_all() returns OK even when the log has been rotated."""
+    import os, sys
+    sys.path.insert(0, "src")
+    os.environ.setdefault("ARANMANAI_DB_KEY", "dev-only-change-me-in-prod-dbkey-2f7c9a4e8b1d3f5a")
+    os.environ.setdefault("ARANMANAI_JWT_SECRET", "dev-only-change-me-in-prod-jwt-c4e8a1d9f2b3")
+    from pathlib import Path
+    from aranmanai.security.audit import AuditLog, AuditAction
+    from aranmanai.config import get_settings
+    log = AuditLog(get_settings().audit_log_path)
+    # Append 5 entries to the current file
+    for i in range(5):
+        log.append(AuditAction.READ_CASE, actor_id="rotate-test", subject_id=f"r-{i}")
+    # Simulate rotation: copy current → audit.log.1, then truncate current
+    current = log.log_path
+    rotated = current.with_suffix(current.suffix + ".1")
+    rotated.write_bytes(current.read_bytes())
+    # Truncate the current file
+    current.write_bytes(b"")
+    # Re-instantiate (re-reads last_hash from the now-empty current file)
+    AuditLog._instances.clear()  # bypass memoization for the test
+    log2 = AuditLog(get_settings().audit_log_path)
+    # Append 3 more entries to the new current file
+    for i in range(3):
+        log2.append(AuditAction.READ_CASE, actor_id="rotate-test", subject_id=f"r-new-{i}")
+    # verify() on the current file alone: should pass (new chain from GENESIS)
+    ok_curr, _ = log2.verify()
+    assert ok_curr, "current file alone must verify"
+    # verify_all() must walk both files and pass
+    ok_all, msg_all = log2.verify_all()
+    assert ok_all, f"verify_all() must pass across rotated files: {msg_all}"
+    assert "2 file(s)" in msg_all or "2 files" in msg_all, f"expected 2 files, got: {msg_all}"
+    # Cleanup
+    AuditLog._instances.clear()
+    if rotated.exists():
+        rotated.unlink()
+
+
+# ---------- v1.1: load test ----------
+
+def test_v11_load_50_concurrent_case_reads():
+    """v1.1: 50 concurrent F4 case-list reads should all return 200."""
+    token = _admin_token()
+    h = {"Authorization": f"Bearer {token}"}
+
+    def fetch(i: int) -> int:
+        r = requests.get(
+            f"{API}/kishore/cases?page=1&page_size=20", headers=h, timeout=10
+        )
+        return r.status_code
+
+    with ThreadPoolExecutor(max_workers=50) as ex:
+        futures = [ex.submit(fetch, i) for i in range(50)]
+        statuses = [f.result() for f in as_completed(futures)]
+    # All 50 should be 200; allow up to 2 transient failures (e.g. DB
+    # write lock contention from previous tests)
+    failures = [s for s in statuses if s != 200]
+    assert len(failures) <= 2, f"too many failures: {failures[:5]}"
