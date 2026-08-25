@@ -9,6 +9,7 @@ Frontend QA fixes applied (2026-08-25).
 """
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -18,6 +19,42 @@ import streamlit as st
 from aranmanai.config import get_settings
 
 API_BASE = f"http://{get_settings().host}:{get_settings().port}"
+
+# F-10: this is a NAMED complaint-intake flow (goes on the FIR record).
+# Anonymous reporting is a separate, deliberately distinct product surface
+# (the Abhaya helpline — see src/aranmanai/api/v1/safety.py) and is not
+# what this tab is for.
+_ABHAYA_WARNING = (
+    "No complainant details entered. Submit only if this is deliberate — "
+    "a complaint without a named complainant cannot normally be registered "
+    "as an FIR. For anonymous information, use Abhaya."
+)
+
+# F-10: light heuristic for a 10-digit Indian mobile number in free-text
+# transcript prose. Matches an optional +91/91/0 prefix followed by a
+# number starting 6-9 (the valid Indian mobile leading-digit range),
+# tolerating spaces/hyphens between digit groups as people naturally say
+# or punctuate phone numbers.
+_PHONE_RE = re.compile(
+    r"(?:\+?91[\s-]?|0)?([6-9]\d{4}[\s-]?\d{5})\b"
+)
+
+
+def _extract_phone(text: str) -> str | None:
+    """Best-effort extraction of a 10-digit Indian mobile number from text.
+
+    Deliberately simple regex heuristic, not a full NER pass — there is no
+    NER utility already wired into this codebase (checked core/tamil and
+    elsewhere) and pulling in a new NLP dependency for this alone isn't
+    warranted. Officers always review/edit the result regardless.
+    """
+    if not text:
+        return None
+    m = _PHONE_RE.search(text)
+    if not m:
+        return None
+    digits = re.sub(r"[\s-]", "", m.group(1))
+    return digits if len(digits) == 10 else None
 
 
 # ──────────────────────────────────────────────────────────────
@@ -48,6 +85,102 @@ def _nonempty(label: str, value: str) -> str:
 def _short(s: str | None, n: int = 50) -> str:
     s = s or "—"
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+# ──────────────────────────────────────────────────────────────
+# F-10: Complainant Details — review step between transcription and
+# complaint-intake submission. This is a NAMED complaint flow (goes on
+# the FIR record); anonymous reporting belongs on the separate Abhaya
+# helpline, not here.
+# ──────────────────────────────────────────────────────────────
+def _render_complainant_details_and_submit() -> None:
+    transcript_text = st.session_state.get("_pending_complaint_transcript", "")
+    detected_language = st.session_state.get("_pending_complaint_language", "en")
+
+    st.divider()
+    st.subheader("Complainant Details")
+    st.caption(
+        "These details are required on the complaint record; where "
+        "detected in the recording they are pre-filled below — verify "
+        "and correct before submitting."
+    )
+
+    # Pre-fill (once per transcript) from a lightweight heuristic, but the
+    # fields are always officer-editable afterwards via the widget's own
+    # session_state-backed key regardless of whether detection found
+    # anything.
+    if "_complainant_name_prefilled" not in st.session_state:
+        # No NER util exists in this codebase (core/tamil etc. checked) and
+        # a new NLP dependency isn't warranted for this alone — name is
+        # left for the officer to fill in.
+        st.session_state["_complainant_name_prefilled"] = ""
+    if "_complainant_contact_prefilled" not in st.session_state:
+        st.session_state["_complainant_contact_prefilled"] = (
+            _extract_phone(transcript_text) or ""
+        )
+
+    name = st.text_input(
+        "Complainant name",
+        value=st.session_state["_complainant_name_prefilled"],
+        placeholder="Not detected in recording — enter full name",
+        key="complainant_name_input",
+    )
+    contact = st.text_input(
+        "Contact number",
+        value=st.session_state["_complainant_contact_prefilled"],
+        placeholder="Not detected in recording — enter mobile number",
+        key="complainant_contact_input",
+    )
+
+    both_empty = not name.strip() and not contact.strip()
+    ack = False
+    if both_empty:
+        st.warning(_ABHAYA_WARNING)
+        ack = st.checkbox(
+            "I confirm this is deliberate — submit without complainant details.",
+            key="complainant_empty_ack",
+        )
+
+    submit_disabled = both_empty and not ack
+    if st.button("Submit complaint", type="primary", key="submit_complaint_btn", disabled=submit_disabled):
+        with st.spinner("Generating structured complaint from transcript..."):
+            try:
+                intake_r = requests.post(
+                    f"{API_BASE}/api/v1/ai/complaint-intake",
+                    json={
+                        "raw_complaint": transcript_text,
+                        "complainant_name": name.strip() or None,
+                        "complainant_contact": contact.strip() or None,
+                        "language": detected_language,
+                    },
+                    headers=_auth_headers(),
+                    timeout=60,
+                )
+                if intake_r.status_code == 200:
+                    intake = intake_r.json()
+                    st.success("Complaint generated from audio!")
+                    st.text_area(
+                        "Structured complaint",
+                        intake.get("structured", ""),
+                        height=300,
+                    )
+                    st.write(f"**Registerable:** {intake.get('registerable', '?')}")
+                    st.write(f"**Likely BNS sections:** {intake.get('likely_sections_bns', [])}")
+                    st.write(f"**Offence type:** {intake.get('offence_type', '?')}")
+                    # Clear the pending state so this form doesn't linger
+                    # after a successful submit.
+                    st.session_state.pop("_pending_complaint_transcript", None)
+                    st.session_state.pop("_pending_complaint_language", None)
+                else:
+                    st.warning(
+                        f"Complaint intake failed (HTTP {intake_r.status_code}). "
+                        "AI service may be unavailable."
+                    )
+            except Exception as ie:
+                st.warning(
+                    f"Complaint intake error: {ie}. Start the API server with: "
+                    "python -m aranmanai.api.main"
+                )
 
 
 def render_voice_tab() -> None:
@@ -176,39 +309,21 @@ def render_voice_tab() -> None:
                         language="text",
                     )
 
-                    # Chain: send to complaint-intake
+                    # F-10: don't auto-submit to complaint-intake. Stash the
+                    # transcript + detected language and let the render pass
+                    # below (outside this in-flight block) show the
+                    # Complainant Details review step first. This survives
+                    # the rerun triggered by the "Submit complaint" button.
                     if generate_clicked and transcript_text:
-                        with st.spinner("Generating structured complaint from transcript..."):
-                            try:
-                                intake_r = requests.post(
-                                    f"{API_BASE}/api/v1/ai/complaint-intake",
-                                    json={
-                                        "raw_complaint": transcript_text,
-                                        "complainant_name": None,
-                                        "complainant_contact": None,
-                                        "language": result.get("language", "en") or "en",
-                                    },
-                                    headers=_auth_headers(),
-                                    timeout=60,
-                                )
-                                if intake_r.status_code == 200:
-                                    intake = intake_r.json()
-                                    st.success("Complaint generated from audio!")
-                                    st.text_area(
-                                        "Structured complaint",
-                                        intake.get("structured", ""),
-                                        height=300,
-                                    )
-                                    st.write(f"**Registerable:** {intake.get('registerable', '?')}")
-                                    st.write(f"**Likely BNS sections:** {intake.get('likely_sections_bns', [])}")
-                                    st.write(f"**Offence type:** {intake.get('offence_type', '?')}")
-                                else:
-                                    st.warning(
-                                        f"Complaint intake failed (HTTP {intake_r.status_code}). "
-                                        "AI service may be unavailable."
-                                    )
-                            except Exception as ie:
-                                st.warning(f"Complaint intake error: {ie}. Start the API server with: python -m aranmanai.api.main")
+                        st.session_state["_pending_complaint_transcript"] = transcript_text
+                        st.session_state["_pending_complaint_language"] = (
+                            result.get("language", "en") or "en"
+                        )
+                        # Reset any stale detected/edited values from a
+                        # previous run so pre-fill re-runs against the new
+                        # transcript.
+                        st.session_state.pop("_complainant_name_prefilled", None)
+                        st.session_state.pop("_complainant_contact_prefilled", None)
                 else:
                     st.error(f"Transcription failed: HTTP {rr.status_code}: {rr.text[:300]}")
             except Exception as e:
@@ -220,6 +335,14 @@ def render_voice_tab() -> None:
                     except OSError:
                         pass
                 st.session_state["_voice_in_flight"] = False
+
+    # F-10: Complainant Details review + submit step. Rendered whenever
+    # there is a transcript pending complaint-intake submission — this is
+    # a separate step from transcription itself so the officer always sees
+    # (and can correct) the complainant fields before anything is
+    # submitted, rather than it happening silently inline.
+    if st.session_state.get("_pending_complaint_transcript"):
+        _render_complainant_details_and_submit()
 
     # W-4: also display the persisted transcript if user has one
     elif st.session_state.get("voice_transcript"):
