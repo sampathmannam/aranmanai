@@ -100,6 +100,37 @@ class CapabilitiesResponse(BaseModel):
     max_audio_size_mb: int
 
 
+# F-9: server-side content sniff. Upload size checks alone let a
+# non-audio file renamed to `.wav` through to faster-whisper, which can
+# crash or misbehave on garbage bytes. This is a cheap magic-byte check
+# on the container signatures of the 4 formats this API documents as
+# supported (WAV/MP3/M4A/OGG) — not a full audio decode/validation, and
+# deliberately not a new dependency (no python-magic/libmagic) for 4
+# well-known, simple-to-sniff signatures.
+def _looks_like_audio(data: bytes) -> bool:
+    """Best-effort magic-byte sniff for WAV/MP3/M4A(MP4)/OGG container signatures.
+
+    Each check only requires as many bytes as its own signature needs (an
+    MP3 ID3 tag is a valid, if minimal, MP3 file at just 10 bytes) rather
+    than gating the whole function behind one flat minimum length.
+    """
+    # WAV: "RIFF"....."WAVE"
+    if len(data) >= 12 and data[0:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return True
+    # OGG: "OggS"
+    if len(data) >= 4 and data[0:4] == b"OggS":
+        return True
+    # M4A / MP4: bytes 4-7 == "ftyp"
+    if len(data) >= 8 and data[4:8] == b"ftyp":
+        return True
+    # MP3: ID3 tag, or a frame sync (11 set bits: 0xFF followed by 0xE0-0xFF)
+    if len(data) >= 3 and data[0:3] == b"ID3":
+        return True
+    if len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0:
+        return True
+    return False
+
+
 @router.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe(
     audio: UploadFile = File(..., description="Audio file (WAV/MP3/M4A/OGG)"),
@@ -111,6 +142,9 @@ async def transcribe(
     data = await audio.read()
     if len(data) > settings.max_audio_size_mb * 1024 * 1024:
         raise HTTPException(413, f"Audio file too large (>{settings.max_audio_size_mb}MB)")
+    # F-9: content sniff — reject non-audio bytes before they reach faster-whisper
+    if not _looks_like_audio(data):
+        raise HTTPException(415, "File does not appear to be a supported audio format (WAV/MP3/M4A/OGG)")
     # Write to temp file (faster-whisper expects path)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
         tf.write(data)
@@ -145,6 +179,9 @@ async def pipeline(
     data = await audio.read()
     if len(data) > settings.max_audio_size_mb * 1024 * 1024:
         raise HTTPException(413, f"Audio file too large (>{settings.max_audio_size_mb}MB)")
+    # F-9: content sniff — reject non-audio bytes before they reach faster-whisper
+    if not _looks_like_audio(data):
+        raise HTTPException(415, "File does not appear to be a supported audio format (WAV/MP3/M4A/OGG)")
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
         tf.write(data)
         tmp_path = Path(tf.name)
