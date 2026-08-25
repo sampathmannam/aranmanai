@@ -115,7 +115,22 @@ class AuditLog:
     stays the same.
     """
 
+    # P1 AuditLog memoization: cache the constructed AuditLog per path.
+    # Avoids re-reading the entire file on every API call (O(n^2) lifetime).
+    _instances: dict = {}
+
+    def __new__(cls, log_path: Path):
+        key = str(log_path.resolve())
+        if key not in cls._instances:
+            instance = super().__new__(cls)
+            instance._initialized = False
+            cls._instances[key] = instance
+        return cls._instances[key]
+
     def __init__(self, log_path: Path) -> None:
+        if getattr(self, "_initialized", False):
+            return
+        self._initialized = True
         self.log_path = log_path
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.log_path.exists():
@@ -153,9 +168,15 @@ class AuditLog:
         """Append a new entry. Returns the new entry's log_id.
 
         C-4 fix: held under _audit_lock to serialise concurrent appends
-        from multiple threads. For multi-process deployments, migrate
-        to SQLite (the chain logic is unchanged).
+        from multiple threads. The entire critical section (read prev,
+        compute hash, write, update _last_hash) is inside the lock to
+        prevent the "two threads write the same prev_hash" race.
+        For multi-process deployments, migrate to SQLite.
         """
+        # P1 M-3 fix: open binary mode for portable fsync on Windows.
+        # Text-mode fsync is a partial no-op on Windows because Python's
+        # text wrapper uses WriteFile not write.
+        line_bytes: bytes
         with _audit_lock:
             log_id = str(uuid.uuid4())
             ts = datetime.now(timezone.utc).isoformat()
@@ -172,12 +193,12 @@ class AuditLog:
             }
             new_hash = _hash_entry(self._last_hash, entry_core)
             full_entry = {**entry_core, "prev_hash": self._last_hash, "hash": new_hash}
-
-            with self.log_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(full_entry, default=str) + "\n")
+            line_bytes = (json.dumps(full_entry, default=str) + "\n").encode("utf-8")
+            with self.log_path.open("ab") as f:
+                f.write(line_bytes)
                 f.flush()
-                os.fsync(f.fileno())  # M-3 partial: durability of the fsync
-            self._last_hash = new_hash
+                os.fsync(f.fileno())  # now durable on Linux + Windows
+                self._last_hash = new_hash
         log.info(
             "audit.appended",
             log_id=log_id,
