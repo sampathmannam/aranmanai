@@ -25,7 +25,19 @@ from aranmanai.config import get_settings
 
 # Always-wide layout. Login also uses wide so the visual transition is
 # not jarring. (Fix U-1)
-st.set_page_config(page_title="Aranmanai", page_icon="🏛️", layout="wide")
+#
+# U-8: `_sidebar_state` (session_state) drives `initial_sidebar_state` below.
+# Streamlit's sidebar only re-evaluates its collapsed/expanded state when
+# this value actually *changes* between reruns (it does not track a
+# persisted "user manually collapsed" flag) — so toggling this value is a
+# real way to force it back open, not just a placebo. See "Show Menu"
+# button in main_page().
+st.set_page_config(
+    page_title="Aranmanai",
+    page_icon="🏛️",
+    layout="wide",
+    initial_sidebar_state=st.session_state.get("_sidebar_state", "auto"),
+)
 
 API_BASE = f"http://{get_settings().host}:{get_settings().port}"
 
@@ -203,6 +215,40 @@ def _breadcrumb(page_name: str) -> None:
 
 
 # ──────────────────────────────────────────────────────────────
+# U-8: sidebar recovery — a visible, working way back in after the user
+# collapses Streamlit's native sidebar.
+#
+# Streamlit has no public "force sidebar open" API. But it is not a
+# placebo either: verified against the installed streamlit==1.40.0
+# frontend bundle that `Sidebar.componentDidUpdate` recomputes
+# `collapsedSidebar` (open/closed) from the `initialSidebarState` prop
+# *whenever that prop's value changes* between reruns — there is no
+# separate persisted "user manually collapsed" flag that would fight
+# this, so a genuine value change reliably re-expands it.
+#
+# `initial_sidebar_state` only accepts "auto" / "expanded" / "collapsed"
+# (anything else raises StreamlitInvalidSidebarStateError), so re-sending
+# the same "expanded" string twice in a row is a no-op the *second* time
+# (no value change => no recompute). We therefore flip-flop between
+# "expanded" and "auto" on every click, which guarantees the value
+# genuinely changes on every click. Since this app always renders with
+# layout="wide" on a single-workstation desktop deployment, "auto"
+# resolves to expanded in practice (Streamlit only auto-collapses under
+# a ~768px width) — the flip-flop lands on an open sidebar on every
+# click in the deployment this product targets.
+# ──────────────────────────────────────────────────────────────
+def _show_menu_button() -> None:
+    if st.button(
+        "Show Menu",
+        key="_show_menu_btn",
+        help="Opens the navigation panel (Cases, CMC, Witnesses, AI Assist) if it has been closed.",
+    ):
+        current = st.session_state.get("_sidebar_state", "auto")
+        st.session_state["_sidebar_state"] = "auto" if current == "expanded" else "expanded"
+        st.rerun()
+
+
+# ──────────────────────────────────────────────────────────────
 # Main page
 # ──────────────────────────────────────────────────────────────
 def main_page() -> None:
@@ -212,6 +258,7 @@ def main_page() -> None:
     if not token or not user:
         login_page()
         return
+    _show_menu_button()
     st.sidebar.title("Aranmanai")
     st.sidebar.write(f"**{user['username']}** ({user['role']})")
     st.sidebar.write(f"District: {user['district']}")
@@ -419,18 +466,13 @@ def render_sp_dashboard() -> None:
     except Exception as e:
         st.error(f"Failed: {e}")
         return
-    # U-3: responsive — single column under 768px
-    if st.session_state.get("_screen_wide", True):
-        cols = st.columns(4)
-        cols[0].metric("Today hearings", data["today_hearings"])
-        cols[1].metric("Critical hearings", data["critical_hearings"])
-        cols[2].metric("Cases stuck", data["cases_stuck"])
-        cols[3].metric("Hostile need prep", data["hostile_witnesses_needing_prep"])
-    else:
-        st.metric("Today hearings", data["today_hearings"])
-        st.metric("Critical hearings", data["critical_hearings"])
-        st.metric("Cases stuck", data["cases_stuck"])
-        st.metric("Hostile need prep", data["hostile_witnesses_needing_prep"])
+    # U-3/F-6: single-workstation v1 — always wide-desktop layout (no fake
+    # responsiveness; see README "Known Limitations").
+    cols = st.columns(4)
+    cols[0].metric("Today hearings", data["today_hearings"])
+    cols[1].metric("Critical hearings", data["critical_hearings"])
+    cols[2].metric("Cases stuck", data["cases_stuck"])
+    cols[3].metric("Hostile need prep", data["hostile_witnesses_needing_prep"])
     if data.get("conviction_rate_30d") is not None:
         st.metric(
             "Conviction rate (30 days)",
@@ -466,20 +508,14 @@ def render_cmc_morning() -> None:
         st.error(f"Failed to load CMC view: {e}")
         return
 
-    # U-3: responsive KPI row
-    if st.session_state.get("_screen_wide", True):
-        cols = st.columns(5)
-        cols[0].metric("Today's hearings", view["n_hearings"])
-        cols[1].metric("Pending actions", view["n_actions_pending"])
-        cols[2].metric("Overdue actions", view["n_actions_overdue"], delta_color="inverse")
-        cols[3].metric("Open escalations", view["n_escalations_open"], delta_color="inverse")
-        cols[4].metric("Cases unreviewed", view["n_cases_unreviewed"], delta_color="inverse")
-    else:
-        st.metric("Today's hearings", view["n_hearings"])
-        st.metric("Pending actions", view["n_actions_pending"])
-        st.metric("Overdue actions", view["n_actions_overdue"], delta_color="inverse")
-        st.metric("Open escalations", view["n_escalations_open"], delta_color="inverse")
-        st.metric("Cases unreviewed", view["n_cases_unreviewed"], delta_color="inverse")
+    # U-3/F-6: single-workstation v1 — always wide-desktop layout (no fake
+    # responsiveness; see README "Known Limitations").
+    cols = st.columns(5)
+    cols[0].metric("Today's hearings", view["n_hearings"])
+    cols[1].metric("Pending actions", view["n_actions_pending"])
+    cols[2].metric("Overdue actions", view["n_actions_overdue"], delta_color="inverse")
+    cols[3].metric("Open escalations", view["n_escalations_open"], delta_color="inverse")
+    cols[4].metric("Cases unreviewed", view["n_cases_unreviewed"], delta_color="inverse")
 
     # Open meeting (W-5/S-2: rerun after success)
     st.subheader("1. Open morning meeting")
