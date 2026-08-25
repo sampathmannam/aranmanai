@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -50,6 +51,42 @@ _AUDIT_LOCK_TIMEOUT_SEC = 10
 # Genesis hash — the prev_hash of the very first audit entry.
 # Doesn't need to be secret; just a stable starting point.
 GENESIS_HASH = "0" * 64
+
+# H-5 fix: defense-in-depth bound on actor_id length. Real actor_ids are
+# either User.id (a UUID string, ~36 chars) or a login username (up to
+# 64 chars per LoginRequest's Field(max_length=64), recorded as actor_id
+# on LOGIN_FAILED before the user row -- and thus User.id -- is known).
+# 128 leaves generous headroom for either without allowing unbounded input.
+_MAX_ACTOR_ID_LEN = 128
+
+# Control characters (C0 + DEL): never legitimate in an identity string.
+# json.dumps() would escape these safely, but silently accepting them
+# into a DPDP Sec 8(3) compliance log undermines its evidentiary value --
+# reject as clearly-invalid identity data instead.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _validate_actor_id(actor_id: str) -> None:
+    """Validate actor_id before it is written into the audit chain.
+
+    H-5 fix (defense-in-depth): AuditLog.append() previously accepted
+    any string as actor_id with zero validation. Nothing stopped a
+    caller from passing an empty string, an absurdly long string, or a
+    string containing control characters as the identity of "who did
+    this" in a hash-chained, DPDP Sec 8(3) compliance-critical audit
+    trail. Raises ValueError on any of those; callers should treat a
+    ValueError here as a bug at the call site, not a recoverable
+    condition.
+    """
+    if not actor_id or not actor_id.strip():
+        raise ValueError("actor_id must not be empty or whitespace-only")
+    if len(actor_id) > _MAX_ACTOR_ID_LEN:
+        raise ValueError(
+            f"actor_id exceeds max length of {_MAX_ACTOR_ID_LEN} chars "
+            f"(got {len(actor_id)})"
+        )
+    if _CONTROL_CHAR_RE.search(actor_id):
+        raise ValueError("actor_id must not contain control characters")
 
 
 class AuditAction(str, Enum):
@@ -252,7 +289,12 @@ class AuditLog:
         P1 M-3 fix: open binary mode for portable fsync on Windows.
         Text-mode fsync is a partial no-op on Windows because Python's
         text wrapper uses WriteFile not write.
+
+        H-5 fix: actor_id is validated before we ever try to take the
+        lock, so a bad caller fails fast without perturbing the chain
+        or blocking other appenders.
         """
+        _validate_actor_id(actor_id)
         line_bytes: bytes
         try:
             # Intentionally nested (not a single combined `with`): the file

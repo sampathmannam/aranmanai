@@ -31,11 +31,13 @@ from pydantic import BaseModel
 from aranmanai.ai.services.cmc_loop import CmcLoopService
 from aranmanai.api.deps import DbSession, DspUser, IoUser, PpUser, SpUser
 from aranmanai.config import get_settings
+from aranmanai.core.time_utils import local_today
 from aranmanai.db.models.coordination import (
     ActionItem,
     ActionPriority,
     ActionStatus,
 )
+from aranmanai.db.models.user import UserRole
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog
 
@@ -267,7 +269,11 @@ def sp_review_action(action_id: str, user: SpUser, db: DbSession) -> dict:
         a = svc.mark_sp_reviewed(action_id)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
-    return {"action_id": a.id, "sp_reviewed": a.sp_reviewed, "sp_reviewed_at": a.sp_reviewed_at.isoformat()}
+    return {
+        "action_id": a.id,
+        "sp_reviewed": a.sp_reviewed,
+        "sp_reviewed_at": a.sp_reviewed_at.isoformat() if a.sp_reviewed_at else None,
+    }
 
 
 @router.post("/sweep", response_model=CmcSweepResponse)
@@ -297,13 +303,17 @@ def resolve_escalation(escalation_id: str, req: CmcEscalationResolveRequest, use
         e = svc.resolve_escalation(escalation_id, note=req.note)
     except ValueError as ex:
         raise HTTPException(404, str(ex)) from ex
-    return {"escalation_id": e.id, "status": e.status.value, "resolved_at": e.resolved_at.isoformat()}
+    return {
+        "escalation_id": e.id,
+        "status": e.status.value,
+        "resolved_at": e.resolved_at.isoformat() if e.resolved_at else None,
+    }
 
 
 @router.post("/sp-review", status_code=201)
 def sp_review_case(req: CmcSpReviewRequest, user: SpUser, db: DbSession) -> dict:
     svc = CmcLoopService(db)
-    review_date = _date.fromisoformat(req.review_date) if req.review_date else _date.today()
+    review_date = _date.fromisoformat(req.review_date) if req.review_date else local_today()
     r = svc.sp_review_case(
         case_id=req.case_id,
         sp_id=user.id,
@@ -330,7 +340,7 @@ def sp_review_case(req: CmcSpReviewRequest, user: SpUser, db: DbSession) -> dict
 @router.get("/daily-view", response_model=CmcDailyViewResponse)
 def daily_view(user: SpUser, db: DbSession, target_date: str | None = None) -> CmcDailyViewResponse:
     svc = CmcLoopService(db)
-    target = _date.fromisoformat(target_date) if target_date else _date.today()
+    target = _date.fromisoformat(target_date) if target_date else local_today()
     v = svc.daily_view(district=user.district, target_date=target)
     return CmcDailyViewResponse(
         date=v.date,
@@ -460,7 +470,7 @@ def dsp_weekly_rollup(user: DspUser, db: DbSession, week_start: str | None = Non
     every week. This endpoint is the rollup above the SP's daily view.
     """
     svc = CmcLoopService(db)
-    week_start_date = _date.fromisoformat(week_start) if week_start else _date.today()
+    week_start_date = _date.fromisoformat(week_start) if week_start else local_today()
     # Roll back to Monday
     week_start_date = week_start_date - timedelta(days=week_start_date.weekday())
     return svc.dsp_weekly_rollup(district=user.district, week_start=week_start_date)
@@ -477,6 +487,17 @@ def pilot_metrics(user: SpUser, db: DbSession, district: str | None = None) -> d
     Returns the actual conviction rate from closed pilot cases plus
     the delta against the baseline p_conviction captured at enrollment.
     This is the endpoint that proves whether the system moved the rate.
+
+    H-2 fix (IDOR): a non-admin SP can only read their own district's
+    metrics. Passing district=<other-district> was a cross-district
+    read of conviction-rate data. Same pattern as list_patrol_dispatches
+    in safety.py.
     """
+    target = district or user.district
+    if user.role != UserRole.ADMIN.value and target != user.district:
+        raise HTTPException(
+            status_code=403,
+            detail="SPs can only view their own district's pilot metrics",
+        )
     svc = CmcLoopService(db)
-    return svc.pilot_conviction_metrics(district=district or user.district)
+    return svc.pilot_conviction_metrics(district=target)

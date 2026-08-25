@@ -8,20 +8,26 @@ Per Kishore's Eluru deployment (New Indian Express, 7 Nov 2024):
 
 This endpoint set replicates the citizen-facing surface. Storage is now
 in the database (was in-memory lists - C-5 fix from security audit).
-H-3 fix: in-process rate limiting prevents DoS via memory exhaustion
-or DB write amplification.
+H-3 fix: rate limiting prevents DoS via memory exhaustion or DB write
+amplification.
+
+Kishore-review item 6 fix: rate limiting is now backed by
+`aranmanai.security.rate_limit.SqliteRateLimiter`, a shared SQLite file
+next to the audit log, instead of an in-process dict. The old dict-based
+limiter was broken under a multi-worker deployment (N gunicorn/uvicorn
+workers = N independent buckets = effective limit multiplied by N);
+SQLite is visible to every worker process, so the limit is enforced
+across all of them. See `aranmanai.security.rate_limit` for the design.
 """
 from __future__ import annotations
 
-import time
 import uuid
-from collections import defaultdict
-from threading import Lock
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from aranmanai.api.deps import DbSession, IoUser, SpUser
+from aranmanai.config import get_settings
 from aranmanai.db.models.safety import (
     AnonymousReport as AnonymousReportRow,
 )
@@ -33,67 +39,46 @@ from aranmanai.db.models.safety import (
 )
 from aranmanai.db.models.user import User, UserRole
 from aranmanai.observability import get_logger
+from aranmanai.security.rate_limit import SqliteRateLimiter
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/safety", tags=["citizen-safety"])
 
 
-# H-3 fix: in-process per-IP rate limiter (token bucket per minute).
-# For multi-process deployments, use slowapi + Redis. Single-process
-# coverage is enough for the demo / pilot deployment.
-_rate_state: dict[tuple[str, str], list[float]] = defaultdict(list)
-_rate_lock = Lock()
 # P1 fix: per-route rate limits. Helpline + report get the strict
 # default; patrol dispatch needs to be able to send multiple units in
 # one minute during an active incident, so it gets a higher limit.
-#
-# v1.1 CAVEAT (Kishore review, item 6): the rate-limit state lives
-# in this Python process's memory. If Aranmanai is deployed with
-# N gunicorn/uvicorn workers, each worker has its own bucket, so the
-# effective per-IP limit is N * the per-worker limit. For the demo
-# (single uvicorn) and the v1 pilot (single VPS) this is fine; for
-# any multi-worker / multi-host deployment, swap this for slowapi
-# backed by Redis. See docs/MULTI_PROCESS_RATE_LIMIT.md (to be
-# written before the v1.2 multi-worker deployment).
 _RATE_LIMITS: dict = {
     "/helpline/call": 10,
     "/report": 10,
     "/patrol/dispatch": 60,
 }
-_RATE_WINDOW_SEC = 60
-_BUCKET_TTL_SEC = 3600  # P1 fix: drop bucket keys after 1h idle
-_last_cleanup = 0.0
+_DEFAULT_RATE_LIMIT = 10
 
 
-def _cleanup_rate_state() -> None:
-    """P1 fix: bound the in-process dict by dropping idle keys."""
-    global _last_cleanup
-    now = time.monotonic()
-    if now - _last_cleanup < 300:  # cleanup every 5 min
-        return
-    _last_cleanup = now
-    cutoff = now - _BUCKET_TTL_SEC
-    stale = [k for k, v in _rate_state.items() if not v or v[-1] < cutoff]
-    for k in stale:
-        _rate_state.pop(k, None)
+def _rate_limiter() -> SqliteRateLimiter:
+    """Build the shared SQLite rate limiter.
+
+    Lives alongside the audit log (`get_settings().audit_log_path`'s
+    parent dir) rather than a new config setting, since it's the same
+    kind of durable-but-not-DB operational state. `SqliteRateLimiter`
+    itself does the CREATE TABLE IF NOT EXISTS, which is idempotent, so
+    constructing this fresh per call (picking up the current settings
+    each time, which matters for tests that reconfigure the data dir
+    per-test) is cheap and safe.
+    """
+    db_path = get_settings().audit_log_path.parent / "rate_limit.sqlite3"
+    return SqliteRateLimiter(db_path)
 
 
 def _check_rate(ip: str, route: str) -> None:
     """Raise 429 if ip+route exceeds the per-route rate."""
-    now = time.monotonic()
-    _cleanup_rate_state()
-    with _rate_lock:
-        key = (ip, route)
-        bucket = _rate_state[key]
-        # drop entries older than the window
-        bucket[:] = [t for t in bucket if now - t < _RATE_WINDOW_SEC]
-        limit = _RATE_LIMITS.get(route, 10)
-        if len(bucket) >= limit:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Rate limit exceeded for {route} (max {limit}/min)",
-            )
-        bucket.append(now)
+    limit = _RATE_LIMITS.get(route, _DEFAULT_RATE_LIMIT)
+    if not _rate_limiter().hit(ip, route, limit):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded for {route} (max {limit}/min)",
+        )
 
 
 def _client_ip(request: Request) -> str:

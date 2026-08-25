@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import uuid
 from pathlib import Path
+
+import pytest
 
 
 def _mp_append_worker(log_path_str: str, actor: str, count: int) -> None:
@@ -165,6 +168,67 @@ def test_c4_audit_chain_survives_multiprocess_writes(tmp_path):
     ok, msg = verifier.verify()
     assert ok, f"chain broken after concurrent multiprocess writes: {msg}"
     assert f"{n_procs * per_proc} entries" in msg, f"unexpected entry count: {msg}"
+
+
+def test_h5_actor_id_valid_uuid_happy_path(tmp_env):
+    """H-5: a real User.id-shaped UUID actor_id keeps working."""
+    from aranmanai.security import AuditAction, AuditLog
+
+    log = AuditLog(tmp_env / "audit.log")
+    actor = str(uuid.uuid4())
+    log_id = log.append(AuditAction.READ_CASE, actor_id=actor, subject_id="c-1")
+    assert log_id
+    entries = log.tail(1)
+    assert entries[0]["actor_id"] == actor
+
+
+def test_h5_actor_id_valid_username_happy_path(tmp_env):
+    """H-5: login-failed style actor_id (raw username, not yet a User.id)
+    up to the 64-char LoginRequest max must keep working.
+    """
+    from aranmanai.security import AuditAction, AuditLog
+
+    log = AuditLog(tmp_env / "audit.log")
+    username = "u" * 64
+    log_id = log.append(AuditAction.LOGIN_FAILED, actor_id=username, subject_id=username, success=False)
+    assert log_id
+
+
+@pytest.mark.parametrize(
+    "bad_actor_id",
+    [
+        "",
+        "   ",
+        "\t\n",
+        "x" * 129,
+        "actor\x00id",
+        "actor\x1fid",
+        "actor\x7fid",
+    ],
+)
+def test_h5_actor_id_rejects_invalid(tmp_env, bad_actor_id):
+    """H-5: empty/whitespace-only, over-length, and control-char actor_ids
+    must be rejected before anything is written to the compliance log.
+    """
+    from aranmanai.security import AuditAction, AuditLog
+
+    log = AuditLog(tmp_env / "audit.log")
+    with pytest.raises(ValueError):
+        log.append(AuditAction.READ_CASE, actor_id=bad_actor_id, subject_id="c-1")
+    # Nothing was written — the chain is still empty / unaffected.
+    ok, msg = log.verify()
+    assert ok
+    assert "0 entries" in msg
+
+
+def test_h5_actor_id_max_length_boundary_accepted(tmp_env):
+    """H-5: exactly the max length (128 chars) is accepted, not rejected."""
+    from aranmanai.security import AuditAction, AuditLog
+
+    log = AuditLog(tmp_env / "audit.log")
+    actor = "x" * 128
+    log_id = log.append(AuditAction.READ_CASE, actor_id=actor, subject_id="c-1")
+    assert log_id
 
 
 def test_v11_audit_verify_all_walks_rotated_files(tmp_env):

@@ -8,10 +8,12 @@ from aranmanai.security.crypto import (
     verify_password,
     verify_token,
 )
+from aranmanai.security.rate_limit import SqliteRateLimiter
 
 __all__ = [
     "AuditLog", "AuditAction", "hash_chain",
     "encrypt_field", "decrypt_field",
     "generate_token", "verify_token",
     "hash_password", "verify_password",
+    "SqliteRateLimiter",
 ]
