@@ -52,6 +52,13 @@ jobs:
           ARANMANAI_DB_KEY: "ci-only-dev-key-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           ARANMANAI_JWT_SECRET: "ci-only-dev-jwt-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
           ARANMANAI_CORS_ORIGINS: '["http://localhost:8501"]'
+          # scripts/run_api.py passes reload=(environment == "development") to
+          # uvicorn. --reload spawns a separate child watcher process, which
+          # would leave Start-Process's $proc.Id pointing at the wrong PID to
+          # kill in the teardown step below. "staging" behaves identically to
+          # "development" everywhere else (is_production() is unaffected) but
+          # disables --reload, so the whole server is exactly one process.
+          ARANMANAI_ENVIRONMENT: staging
         run: |
           $proc = Start-Process -FilePath ".\venv\Scripts\python.exe" `
             -ArgumentList "scripts\run_api.py" `
