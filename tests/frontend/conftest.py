@@ -210,6 +210,23 @@ def mock_voice_api(mocker):
 
 
 @pytest.fixture
+def mock_tamil_api(mocker):
+    """Patch aranmanai.frontend.tamil_tab's `requests.post`.
+
+    tamil_tab.py imports `requests` at module scope and calls
+    `requests.post(...)` directly (like voice_tab.py, not through app.py's
+    `_api_call`), so it needs its own patch target. Unlike `mock_api`,
+    there's no URL router here -- Tamil tests only ever hit one endpoint
+    per test, so a plain MagicMock with an overridable `return_value` is
+    enough (see `mock_voice_api` for the same pattern).
+    """
+    return mocker.patch(
+        "aranmanai.frontend.tamil_tab.requests.post",
+        return_value=RoutedResponse(200, {}),
+    )
+
+
+@pytest.fixture
 def logged_in_app(app_path, mock_api, mock_voice_api) -> Iterator[AppTest]:
     """An AppTest instance pre-seeded as already logged in, run once.
 

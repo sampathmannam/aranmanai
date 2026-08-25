@@ -89,6 +89,18 @@ def _short(s: str | None, n: int = 50) -> str:
 
 
 # ──────────────────────────────────────────────────────────────
+# U-6: file-size indicator + cap enforcement, factored out of
+# render_voice_tab() so it is directly unit-testable -- st.file_uploader
+# has no live-widget support in streamlit.testing.v1.AppTest, so the
+# decision logic itself needs to be callable without a real upload.
+# ──────────────────────────────────────────────────────────────
+def _audio_size_status(filename: str, size_mb: float, max_mb: int) -> tuple[str, bool]:
+    """Return (caption text, over_limit) for an uploaded audio file's size."""
+    caption = f"File: {filename} — {size_mb:.2f}MB / {max_mb}MB"
+    return caption, size_mb > max_mb
+
+
+# ──────────────────────────────────────────────────────────────
 # F-10: Complainant Details — review step between transcription and
 # complaint-intake submission. This is a NAMED complaint flow (goes on
 # the FIR record); anonymous reporting belongs on the separate Abhaya
@@ -219,11 +231,12 @@ def render_voice_tab() -> None:
         type=["wav", "mp3", "m4a", "ogg", "flac"],
         help="Audio is processed locally. Not uploaded to any cloud.",
     )
-    # U-6: file size indicator
+    # U-6: file size indicator + cap enforcement
     if audio_file is not None:
         size_mb = audio_file.size / 1024 / 1024
-        st.caption(f"File: {audio_file.name} — {size_mb:.2f}MB / {settings.max_audio_size_mb}MB")
-        if size_mb > settings.max_audio_size_mb:
+        caption, over_limit = _audio_size_status(audio_file.name, size_mb, settings.max_audio_size_mb)
+        st.caption(caption)
+        if over_limit:
             st.error(
                 f"File too large: {size_mb:.1f}MB > limit {settings.max_audio_size_mb}MB. "
                 "Transcribe a shorter clip."

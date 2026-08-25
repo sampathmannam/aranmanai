@@ -99,6 +99,11 @@ def _api_call(method: str, path: str, *, token: str | None = None, **kwargs) -> 
     headers = kwargs.pop("headers", {})
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if method.lower() != "get":
+        # F-8: any mutation invalidates the short-lived GET debounce cache
+        # (see api_get_cached below) so a deliberate refresh-after-mutation
+        # (W-5/S-1/S-2) never sees stale cached data.
+        st.session_state.pop("_get_cache", None)
     try:
         r = requests.request(method, f"{API_BASE}{path}", headers=headers, timeout=kwargs.pop("timeout", 30), **kwargs)
     except requests.exceptions.ConnectionError:
@@ -121,6 +126,31 @@ def _api_call(method: str, path: str, *, token: str | None = None, **kwargs) -> 
 
 def api_get(path: str, token: str | None = None) -> dict:
     return _api_call("get", path, token=token, timeout=30)
+
+
+# ──────────────────────────────────────────────────────────────
+# F-8: debounce rapid sidebar tab-switching. Each nav click reruns the
+# whole script and re-fetches whatever page is now selected -- flicking
+# through several tabs in under _GET_DEBOUNCE_SEC seconds (the audit's
+# repro: "5 clicks in 2 seconds") fires that many redundant API calls for
+# data that could not plausibly have changed in that window. `_api_call`
+# above clears this cache on every mutating request, so a deliberate
+# refresh after e.g. "Mark reviewed" always sees fresh data -- only
+# read-only re-fetches within the debounce window are ever short-circuited.
+# ──────────────────────────────────────────────────────────────
+_GET_DEBOUNCE_SEC = 2.0
+
+
+def api_get_cached(path: str, token: str | None = None) -> dict:
+    """Debounced GET: reuses the last response for `path` if it is fresh."""
+    cache = st.session_state.setdefault("_get_cache", {})
+    now = time.time()
+    hit = cache.get(path)
+    if hit is not None and (now - hit[0]) < _GET_DEBOUNCE_SEC:
+        return hit[1]
+    data = api_get(path, token=token)
+    cache[path] = (now, data)
+    return data
 
 
 def api_post(path: str, body: dict, token: str | None = None) -> dict:
@@ -160,6 +190,19 @@ def api_post_multipart(path: str, *, files: dict, data: dict | None = None, toke
 def _short(s: str | None, n: int = 40) -> str:
     s = s or "—"
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _full_if_truncated(label: str, full: str | None, n: int) -> None:
+    """U-2: when `_short()` cut a value for a header, show it uncut in the body.
+
+    A malicious or malformed 200-char FIR number no longer breaks the
+    expander header layout (it's truncated there), but truncation alone
+    throws away the tail of the value -- this puts it back, visibly, right
+    inside the expanded body.
+    """
+    full = full or ""
+    if len(full) > n:
+        st.caption(f"Full {label}: {full}")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -298,7 +341,7 @@ def render_today() -> None:
     st.header("Today")
     try:
         with st.spinner("Loading hearings..."):
-            data = api_get("/api/v1/cms/calendar/today", token=token)
+            data = api_get_cached("/api/v1/cms/calendar/today", token=token)
     except Exception as e:
         st.error(f"Failed to load: {e}")
         return
@@ -312,6 +355,7 @@ def render_today() -> None:
         # U-2: truncate FIR number
         fir = _short(h.get("fir_no", ""), 50)
         with st.expander(f"{color} {fir} — {h.get('case_stage', '?')} — {priority.upper()}"):
+            _full_if_truncated("FIR No", h.get("fir_no", ""), 50)
             cols = st.columns(4)
             cols[0].metric("Witnesses", h.get("total_witnesses", 0))
             cols[1].metric("Hostile", h.get("hostile_witnesses", 0))
@@ -378,7 +422,7 @@ def render_cases() -> None:
     qs_str = "&".join(f"{k}={v}" for k, v in qs.items())
     try:
         with st.spinner("Loading cases..."):
-            data = api_get(f"/api/v1/kishore/cases?{qs_str}", token=token)
+            data = api_get_cached(f"/api/v1/kishore/cases?{qs_str}", token=token)
     except Exception as e:
         st.error(f"Failed: {e}")
         return
@@ -409,6 +453,7 @@ def render_cases() -> None:
         status = c.get("status", "?")
         stage = c.get("stage", "?")
         with st.expander(f"{fir} — {status} / {stage}"):
+            _full_if_truncated("FIR No", c.get("fir_no", ""), 40)
             cols = st.columns(4)
             cols[0].metric("Status", status)
             cols[1].metric("Stage", stage)
@@ -433,7 +478,7 @@ def render_witnesses() -> None:
     st.header("Witnesses")
     try:
         with st.spinner("Loading witnesses..."):
-            data = api_get("/api/v1/witnesses", token=token)
+            data = api_get_cached("/api/v1/witnesses", token=token)
     except Exception as e:
         st.error(f"Failed: {e}")
         return
@@ -446,6 +491,7 @@ def render_witnesses() -> None:
         # U-2: truncate witness name
         wname = _short(w.get("name", "?"), 40)
         with st.expander(f"{color} {wname} ({w['type']}) — {cat}"):
+            _full_if_truncated("name", w.get("name", ""), 40)
             st.write(f"Prep: {w['prep_status']}")
             if w.get("hostile_reason"):
                 st.warning(f"Hostile reason: {w['hostile_reason']}")
@@ -461,7 +507,7 @@ def render_sp_dashboard() -> None:
     district = st.session_state["user"]["district"]
     try:
         with st.spinner("Loading dashboard..."):
-            data = api_get(f"/api/v1/cms/sp-dashboard?district={district}", token=token)
+            data = api_get_cached(f"/api/v1/cms/sp-dashboard?district={district}", token=token)
     except Exception as e:
         st.error(f"Failed: {e}")
         return
@@ -502,7 +548,7 @@ def render_cmc_morning() -> None:
 
     try:
         with st.spinner("Loading CMC view..."):
-            view = api_get("/api/v1/cmc/daily-view", token=token)
+            view = api_get_cached("/api/v1/cmc/daily-view", token=token)
     except Exception as e:
         st.error(f"Failed to load CMC view: {e}")
         return
@@ -549,6 +595,7 @@ def render_cmc_morning() -> None:
         # U-2: truncate FIR number
         fir = _short(h.get("fir_no", ""), 40)
         with st.expander(f"[{icon}] {fir} — {h.get('stage', '?')}"):
+            _full_if_truncated("FIR No", h.get("fir_no", ""), 40)
             st.write(f"Hearing: {h.get('date', '?')}")
             st.write(f"PP present: {h.get('pp_present')}, Accused: {h.get('accused_present')}")
             # W-5 / S-1 / F-1: disable button during in-flight, then rerun
@@ -582,6 +629,7 @@ def render_cmc_morning() -> None:
         # U-2: truncate FIR number
         fir = _short(a.get("fir_no", ""), 40)
         with st.expander(f"[{a.get('priority', '?')}] {desc} (FIR: {fir})"):
+            _full_if_truncated("FIR No", a.get("fir_no", ""), 40)
             st.write(f"Assigned to: {a.get('assigned_role', '?')}")
             st.write(f"Due: {a.get('due_date', '?')}")
 
@@ -589,13 +637,14 @@ def render_cmc_morning() -> None:
     st.subheader("4. Open escalations")
     if not view["open_escalations"]:
         st.success("No open escalations.")
-    for e in view["open_escalations"]:
-        sev = {"critical": "🔴", "warning": "🟠", "info": "⚪"}.get(e.get("severity"), "⚪")
-        reason = _short(e.get("reason", ""), 60)
-        fir = _short(e.get("fir_no", ""), 40)
+    for esc in view["open_escalations"]:
+        sev = {"critical": "🔴", "warning": "🟠", "info": "⚪"}.get(esc.get("severity"), "⚪")
+        reason = _short(esc.get("reason", ""), 60)
+        fir = _short(esc.get("fir_no", ""), 40)
         with st.expander(f"{sev} {reason} (FIR: {fir})"):
-            st.write(f"Detail: {e.get('detail') or '—'}")
-            st.write(f"Raised: {e.get('created_at', '?')}")
+            _full_if_truncated("FIR No", esc.get("fir_no", ""), 40)
+            st.write(f"Detail: {esc.get('detail') or '—'}")
+            st.write(f"Raised: {esc.get('created_at', '?')}")
 
     # Top priority actions
     st.subheader("5. Top priority actions")
@@ -608,6 +657,43 @@ def render_cmc_morning() -> None:
             f"- [{a.get('priority', '?')}] {desc} "
             f"(FIR: {fir}, status: {a.get('status', '?')})"
         )
+
+
+# ──────────────────────────────────────────────────────────────
+# U-4: structured, per-tab result rendering -- never a raw st.json() dump.
+# AI Assist results routinely embed case facts, complainant names/contact
+# numbers, and witness statements inside free-text fields (drafted_fir,
+# structured, narrative, questions, ...); dumping the whole response as
+# JSON is exactly the PII-leak/unprofessional-display pattern flagged for
+# the Cases tab (the original `st.json(c)`) and must not exist anywhere
+# else either -- including here, in the F-5 "last result" persistence path.
+# ──────────────────────────────────────────────────────────────
+def _render_ai_result(tab: str, r: dict) -> None:
+    if tab == "Complaint Intake":
+        st.text_area("Structured complaint", r.get("structured", ""), height=400)
+        st.write(f"**Registerable:** {r.get('registerable', '?')}")
+        st.write(f"**Likely BNS sections:** {r.get('likely_sections_bns', [])}")
+    elif tab == "FIR Draft":
+        st.text_area("Drafted FIR", r.get("drafted_fir", ""), height=400)
+        st.write(f"**FIR No:** {r.get('fir_no', '?')}")
+        st.write(f"**Sections applied:** {r.get('sections_applied', [])}")
+    elif tab == "Chargesheet Draft":
+        st.text_area("Drafted chargesheet", r.get("drafted_chargesheet", ""), height=400)
+        st.write(f"**Charges applied:** {r.get('charges_applied', [])}")
+    elif tab == "Investigation Recommendations":
+        for rec in r.get("recommendations", []):
+            st.write(f"- {rec}")
+    elif tab == "Cross-Exam Prep":
+        st.text_area("Cross-exam questions", r.get("questions", ""), height=400)
+        st.write(f"**Strategy notes:** {r.get('strategy_notes', '—')}")
+    elif tab == "Risk Score":
+        st.metric(
+            "Acquittal risk",
+            f"{r.get('score', 0):.0%}",
+            delta=r.get("band", "?").upper(),
+        )
+        st.text_area("Narrative", r.get("narrative", ""), height=300)
+        st.write("Contributing factors:", r.get("contributing_factors", []))
 
 
 # ──────────────────────────────────────────────────────────────
@@ -634,7 +720,8 @@ def render_ai_assist() -> None:
     if hasattr(st.session_state, last_key):
         st.info("Showing your last result for this tab (re-run to refresh).")
         last = getattr(st.session_state, last_key)
-        st.json(last)
+        # U-4: structured render, not a raw JSON dump (see _render_ai_result)
+        _render_ai_result(tab, last)
 
     if tab == "Complaint Intake":
         with st.form("intake"):
@@ -664,9 +751,7 @@ def render_ai_assist() -> None:
                     st.error(f"Failed: {e}")
                     return
             setattr(st.session_state, last_key, r)
-            st.text_area("Structured complaint", r.get("structured", ""), height=400)
-            st.write(f"**Registerable:** {r.get('registerable', '?')}")
-            st.write(f"**Likely BNS sections:** {r.get('likely_sections_bns', [])}")
+            _render_ai_result(tab, r)
 
     elif tab == "FIR Draft":
         # F8 fix: case_id auto-fills 8 of 9 fields from the existing Case record
@@ -755,9 +840,7 @@ def render_ai_assist() -> None:
                     st.error(f"Failed: {e}")
                     return
             setattr(st.session_state, last_key, r)
-            st.text_area("Drafted FIR", r.get("drafted_fir", ""), height=400)
-            st.write(f"**FIR No:** {r.get('fir_no', '?')}")
-            st.write(f"**Sections applied:** {r.get('sections_applied', [])}")
+            _render_ai_result(tab, r)
 
     elif tab == "Chargesheet Draft":
         # W-2: wire up
@@ -791,8 +874,7 @@ def render_ai_assist() -> None:
                     st.error(f"Failed: {e}")
                     return
             setattr(st.session_state, last_key, r)
-            st.text_area("Drafted chargesheet", r.get("drafted_chargesheet", ""), height=400)
-            st.write(f"**Charges applied:** {r.get('charges_applied', [])}")
+            _render_ai_result(tab, r)
 
     elif tab == "Investigation Recommendations":
         # W-2: wire up
@@ -825,8 +907,7 @@ def render_ai_assist() -> None:
                     st.error(f"Failed: {e}")
                     return
             setattr(st.session_state, last_key, r)
-            for rec in r.get("recommendations", []):
-                st.write(f"- {rec}")
+            _render_ai_result(tab, r)
 
     elif tab == "Cross-Exam Prep":
         # W-2: wire up
@@ -858,12 +939,7 @@ def render_ai_assist() -> None:
                     st.error(f"Failed: {e}")
                     return
             setattr(st.session_state, last_key, r)
-            st.text_area(
-                "Cross-exam questions",
-                r.get("questions", ""),
-                height=400,
-            )
-            st.write(f"**Strategy notes:** {r.get('strategy_notes', '—')}")
+            _render_ai_result(tab, r)
 
     elif tab == "Risk Score":
         with st.form("risk"):
@@ -905,13 +981,7 @@ def render_ai_assist() -> None:
                     st.error(f"Failed: {e}")
                     return
             setattr(st.session_state, last_key, r)
-            st.metric(
-                "Acquittal risk",
-                f"{r.get('score', 0):.0%}",
-                delta=r.get("band", "?").upper(),
-            )
-            st.text_area("Narrative", r.get("narrative", ""), height=300)
-            st.write("Contributing factors:", r.get("contributing_factors", []))
+            _render_ai_result(tab, r)
 
 
 if __name__ == "__main__":
