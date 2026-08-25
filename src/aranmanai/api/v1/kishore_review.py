@@ -782,16 +782,39 @@ def record_family_liaison(
     db: DbSession,
 ) -> FamilyLiaisonResponse:
     """F11 fix: track family briefings for POCSO / 304B cases.
+
     P1 IDOR: enforce district match.
+    v1.1: enforce case-type constraint — only POCSO + BNS 304B
+    (dowry death) cases can have a family liaison briefing recorded.
+    The IO sets the `is_pocso_or_304b_case` flag on the Case when
+    filing the FIR; the flag is the source of truth (not the BNS
+    section codes, which can be amended). The DCPO quarterly report
+    is the consumer of this data, and an unconstrained F11 would
+    pollute the report with non-POCSO/304B briefings, eroding DCPO
+    trust in the system.
+
+    Admins bypass the check (for data correction / migration).
     """
     _assert_district_match(case_id, user, db)
-    """F11 fix: track family briefings for POCSO / 304B cases.
-
-    District Child Protection Officer asks quarterly for this data.
-    """
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(404, "Case not found")
+    if not case.is_pocso_or_304b_case:
+        # Even admins cannot create a family liaison briefing on a
+        # non-POCSO/304B case — the DCPO report trusts this filter
+        # to mean "every row is a POCSO or 304B briefing". If a
+        # correction is genuinely needed, set the case's
+        # `is_pocso_or_304b_case` flag first via the case-update
+        # endpoint, then re-record the briefing.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Case {case_id} is not flagged POCSO/304B. "
+                "Family liaison briefings are only for POCSO or BNS 304B "
+                "(dowry death) cases. Set the case's "
+                "`is_pocso_or_304b_case` flag if this is one."
+            ),
+        )
     row = CaseFamilyLiaison(
         case_id=case_id,
         family_contact=req.family_contact,
@@ -972,7 +995,9 @@ class PPBriefingResponse(BaseModel):
     case_id: str
     pp_id: str
     case_action_id: Optional[str] = None
-    read_at: str
+    # v1.1: was `read_at`. Now `recorded_at` (the row creation time).
+    # Actual PP read time is tracked separately when that endpoint ships.
+    recorded_at: str
     notes: Optional[str] = None
     requires_response: bool
 
@@ -992,7 +1017,11 @@ def record_pp_briefing(
 
     P3 fix: PPBriefing.read_at is actually recorded_at (the row creation
     time), not when the PP read the briefing. Tracking actual reads
-    needs a separate endpoint that updates a read_at field.
+    needs a separate column (e.g. `read_at`) added when the PP
+    read-endpoint ships. v1.1: the model field was renamed to
+    `recorded_at` to prevent the IO query that filters on
+    `read_at > now() - interval '1 day'` from silently returning
+    ALL briefings ever sent.
     """
     # P1 fix: the IO must be in the case's district (or admin).
     if req.case_id and user.role != UserRole.ADMIN.value:
@@ -1020,7 +1049,7 @@ def record_pp_briefing(
         case_id=row.case_id,
         pp_id=row.pp_id,
         case_action_id=row.case_action_id,
-        read_at=row.read_at.isoformat(),
+        recorded_at=row.recorded_at.isoformat(),
         notes=row.notes,
         requires_response=row.requires_response,
     )
@@ -1049,7 +1078,7 @@ def get_unread_briefings(
     rows = (
         db.query(PPBriefing)
         .filter(PPBriefing.pp_id == pp_id)
-        .order_by(desc(PPBriefing.read_at))
+        .order_by(desc(PPBriefing.recorded_at))
         .all()
     )
     return [
@@ -1058,7 +1087,7 @@ def get_unread_briefings(
             case_id=r.case_id,
             pp_id=r.pp_id,
             case_action_id=r.case_action_id,
-            read_at=r.read_at.isoformat(),
+            recorded_at=r.recorded_at.isoformat(),
             notes=r.notes,
             requires_response=r.requires_response,
         )

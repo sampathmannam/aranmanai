@@ -214,7 +214,13 @@ class PPBriefing(Base):
     case_action_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("action_item.id"), nullable=True
     )
-    read_at: Mapped[datetime] = mapped_column(
+    # v1.1 rename: this is the time the briefing was RECORDED (i.e. the
+    # IO created the row), not when the PP actually read it. Tracking
+    # actual PP reads needs a separate column (e.g. `read_at`) added
+    # when the PP read-endpoint ships. Renamed from `read_at` to prevent
+    # a future query that filters on `read_at > now() - interval '1 day'`
+    # from silently returning ALL briefings ever sent.
+    recorded_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
