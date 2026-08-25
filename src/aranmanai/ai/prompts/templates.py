@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from aranmanai.ai.prompts._sanitize import delimit, sanitize_for_llm
-
 """Prompt templates for every AI assist endpoint.
 
 Each function returns (system_prompt, user_prompt) given the inputs.
@@ -10,7 +8,7 @@ includes a 'review required' marker so the IO knows the AI did not
 auto-apply. v2 will move the FBR/Quint/BPRD study citations into
 RAG chunks passed in the context.
 """
-from __future__ import annotations
+from aranmanai.ai.prompts._sanitize import delimit, sanitize_for_llm
 
 
 SYSTEM_GENERIC = (

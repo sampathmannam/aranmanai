@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from src.aranmanai.ai.llm_client import LLMClient, get_llm_client
+from src.aranmanai.ai.llm_client import LLMClient
+from src.aranmanai.ai.factory import get_llm_client
 from src.aranmanai.ai.prompts import templates as prompts
 from src.aranmanai.ai.rag import retrieve
 from src.aranmanai.db import get_db
