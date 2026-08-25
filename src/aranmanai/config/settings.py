@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     version: str = "0.1.0"
     environment: Literal["development", "staging", "production"] = "development"
     district: str = Field(default="default-district", description="District name (single-district v1)")
+    data_dir: Path = Path("data")
 
     # ── Server ──
     host: str = "127.0.0.1"
@@ -126,6 +127,16 @@ class Settings(BaseSettings):
             return None
         return v
 
+    # ── Backup ──
+    # backup_encryption_key is intentionally NOT validated here the way
+    # db_key/jwt_secret are: those gate every Settings() construction,
+    # which would mean the API server itself refuses to start without a
+    # backup key configured, even though only scripts/backup.py needs it.
+    # scripts/backup.py checks its own length requirement right before use.
+    backup_encryption_key: str = ""
+    backups_dir: Path = Path("data/backups")
+    backup_schedule_hours: int = 24
+
     # ── Mock state integrations ──
     mock_cctns_data_dir: Path = Path("data/mock_cctns")
     mock_esakshya_data_dir: Path = Path("data/mock_esakshya")
@@ -163,6 +174,7 @@ class Settings(BaseSettings):
             self.mock_esakshya_data_dir,
             self.mock_icjs_data_dir,
             self.llm_model_path.parent,
+            self.backups_dir,
         ]:
             path.mkdir(parents=True, exist_ok=True)
         # M-3: verify the audit log's directory is actually writable. A
