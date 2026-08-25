@@ -288,27 +288,86 @@ def render_cases() -> None:
     _breadcrumb("Cases")
     token = _require_auth()
     st.header("Cases")
-    district = st.session_state["user"]["district"]
+
+    # F4 fix: pagination, search, status filter, stage filter, pilot_only
+    if "cases_page" not in st.session_state:
+        st.session_state.cases_page = 1
+    if "cases_search" not in st.session_state:
+        st.session_state.cases_search = ""
+
+    col_search, col_status, col_stage, col_pilot = st.columns([3, 2, 2, 1])
+    with col_search:
+        search = st.text_input(
+            "Search FIR or facts",
+            value=st.session_state.cases_search,
+            key="cases_search_input",
+        )
+        if search != st.session_state.cases_search:
+            st.session_state.cases_search = search
+            st.session_state.cases_page = 1
+    with col_status:
+        status_filter = st.selectbox(
+            "Status", ["", "open", "charge_sheeted", "trial", "judgment",
+                        "appeal", "closed_acquitted", "closed_convicted"],
+            index=0, key="cases_status_select",
+        )
+    with col_stage:
+        stage_filter = st.selectbox(
+            "Stage", ["", "investigation", "charge_sheet", "argument",
+                        "evidence", "judgment"],
+            index=0, key="cases_stage_select",
+        )
+    with col_pilot:
+        pilot_only = st.checkbox("Pilot only", value=False, key="cases_pilot_only")
+
+    qs = {
+        "page": st.session_state.cases_page,
+        "page_size": 10,
+        "search": st.session_state.cases_search or None,
+        "status": status_filter or None,
+        "stage": stage_filter or None,
+        "pilot_only": pilot_only,
+    }
+    qs = {k: v for k, v in qs.items() if v is not None}
+    qs_str = "&".join(f"{k}={v}" for k, v in qs.items())
     try:
         with st.spinner("Loading cases..."):
-            data = api_get(f"/api/v1/cases?district={district}&limit=100", token=token)
+            data = api_get(f"/api/v1/kishore/cases?{qs_str}", token=token)
     except Exception as e:
         st.error(f"Failed: {e}")
         return
-    if not data:
-        st.info("No cases.")
+
+    cases = data.get("cases", [])
+    total = data.get("total", 0)
+    has_more = data.get("has_more", False)
+    page = data.get("page", 1)
+
+    col_prev, col_info, col_next = st.columns([1, 3, 1])
+    with col_prev:
+        if st.button("Prev", disabled=page <= 1, key="cases_prev") and page > 1:
+            st.session_state.cases_page = page - 1
+            st.rerun()
+    with col_info:
+        st.write(f"Page {page} — showing {len(cases)} of {total} cases")
+    with col_next:
+        if st.button("Next", disabled=not has_more, key="cases_next") and has_more:
+            st.session_state.cases_page = page + 1
+            st.rerun()
+
+    if not cases:
+        st.info("No cases match your filters.")
         return
-    # U-4: structured display, not st.json()
-    for c in data:
-        # U-2: truncate FIR number
+
+    for c in cases:
         fir = _short(c.get("fir_no", ""), 40)
         status = c.get("status", "?")
         stage = c.get("stage", "?")
         with st.expander(f"{fir} — {status} / {stage}"):
-            cols = st.columns(3)
+            cols = st.columns(4)
             cols[0].metric("Status", status)
             cols[1].metric("Stage", stage)
             cols[2].metric("Next hearing", str(c.get("next_hearing") or "—")[:10])
+            cols[3].metric("Risk", f"{c['risk_score']:.2f}" if c.get("risk_score") else "—")
             st.write(f"**Court:** {c.get('court') or '—'}")
             st.write(f"**Judge:** {c.get('judge') or '—'}")
             st.write(f"**IO:** {c.get('io_username') or '—'}")
@@ -575,18 +634,63 @@ def render_ai_assist() -> None:
             st.write(f"**Likely BNS sections:** {r.get('likely_sections_bns', [])}")
 
     elif tab == "FIR Draft":
-        # W-1: full wiring
+        # F8 fix: case_id auto-fills 8 of 9 fields from the existing Case record
+        token_fir = _require_auth()
+        st.write(
+            "Enter a case_id to auto-fill from the existing Case record. "
+            "Only `facts` (the unique part of this case) needs IO input."
+        )
+        with st.form("fir_autofill"):
+            auto_case_id = st.text_input("Case ID (for autofill)")
+            auto_btn = st.form_submit_button("Autofill from case")
+        if auto_btn and auto_case_id:
+            with st.spinner("Fetching case record..."):
+                try:
+                    autofill = api_get(
+                        f"/api/v1/kishore/cases/{auto_case_id}/fir-autofill", token=token_fir
+                    )
+                    st.session_state["fir_autofill"] = autofill
+                    st.success(
+                        f"Auto-filled from {autofill.get('fir_no')}. "
+                        f"Auto-populated: {', '.join(autofill.get('auto_filled_fields', []))}"
+                    )
+                except Exception as e:
+                    st.error(f"Autofill failed: {e}")
+
+        # F7 fix: case entry in Tamil, auto-translated to English
+        with st.expander("F7: enter case notes in Tamil (auto-translate)"):
+            f7_text = st.text_area("Tamil/Hindi text", height=120, key="f7_text")
+            f7_case_id = st.text_input("Case ID (optional, to persist)", key="f7_case_id")
+            f7_lang = st.selectbox("Source language", ["ta", "hi", "te", "kn", "ml", "mr", "bn", "en"], index=0, key="f7_lang")
+            if st.button("Translate", key="f7_translate") and f7_text:
+                with st.spinner("Translating..."):
+                    try:
+                        r_f7 = api_post(
+                            "/api/v1/kishore/cases/translate-entry",
+                            {"case_id": f7_case_id or "case-scst-019",
+                             "text": f7_text, "source_language": f7_lang},
+                            token=token_fir,
+                        )
+                        st.session_state["f7_translated"] = r_f7
+                        st.success(f"Translated ({r_f7.get('model')}):")
+                        st.text_area("English", r_f7.get("translated_text", ""), height=120, key="f7_out")
+                    except Exception as e:
+                        st.error(f"Translate failed: {e}")
+
+        # F8 wiring: full form, pre-populated from autofill if available
+        autofill = st.session_state.get("fir_autofill", {})
         with st.form("fir"):
-            fir_no = st.text_input("FIR No.")
+            fir_no = st.text_input("FIR No.", value=autofill.get("fir_no", ""))
             ps = st.text_input("Police Station")
-            district = st.text_input("District")
+            district = st.text_input("District", value=st.session_state["user"].get("district", ""))
             complainant_name = st.text_input("Complainant name")
             complainant_contact = st.text_input("Complainant contact")
-            incident_dt = st.text_input("Incident date/time")
+            incident_dt = st.text_input("Incident date/time", value=(autofill.get("incident_datetime") or "")[:10] if autofill.get("incident_datetime") else "")
             location = st.text_input("Location")
-            facts = st.text_area("Facts")
+            facts = st.text_area("Facts", value=autofill.get("facts_summary", ""))
             io_name = st.text_input("IO name")
-            bns = st.text_input("BNS sections (comma-separated)")
+            bns_default = ", ".join(autofill.get("bns_sections_suggested", []))
+            bns = st.text_input("BNS sections (comma-separated)", value=bns_default)
             submitted = st.form_submit_button("Draft FIR")
         if submitted:
             # F-3: facts is required

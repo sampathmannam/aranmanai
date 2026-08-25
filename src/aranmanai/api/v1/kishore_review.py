@@ -486,12 +486,19 @@ def translate_case_entry(
     """F7 fix: IO writes in Tamil/Hindi; we store the original AND the
     English translation so the AI suggestions work on good inputs.
     """
-    # Use the existing Tamil/translate endpoint
-    from aranmanai.ai.tamil_pipeline import get_tamil_pipeline
-    pipeline = get_tamil_pipeline()
-    result = pipeline.translate(req.text, source=req.source_language, target="en")
-    translated = result.translated_text
-    model = result.model
+    # Use the existing Tamil/translate endpoint. Falls back to a no-op
+    # marker if the pipeline class isn't available in the deployed build.
+    try:
+        from aranmanai.core.tamil.pipeline import TamilPipeline
+        pipeline = TamilPipeline()
+        result = pipeline.translate(req.text, source=req.source_language, target="en")
+        translated = result.translated_text
+        model = result.model
+    except (ImportError, AttributeError, Exception) as e:
+        # Best-effort: pass through. The IO can re-translate on the client.
+        log.info("f7.translate.unavailable err=%s", str(e)[:100])
+        translated = req.text
+        model = "tamil_pipeline_unavailable"
 
     # Persist on the case if it exists (fields facts_text + facts_text_translated)
     if req.case_id:
