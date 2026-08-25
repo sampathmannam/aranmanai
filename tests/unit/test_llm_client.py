@@ -4,7 +4,6 @@ from __future__ import annotations
 
 def test_mock_llm_routes_fir_prompt(tmp_env):
     from aranmanai.ai.mock_client import MockLLMClient
-    from aranmanai.ai.llm_client import LLMMessage
     from aranmanai.ai.prompts.fir import build_fir_prompt
     client = MockLLMClient()
     msgs = build_fir_prompt(
@@ -27,7 +26,6 @@ def test_mock_llm_routes_fir_prompt(tmp_env):
 
 def test_mock_llm_routes_chargesheet_prompt(tmp_env):
     from aranmanai.ai.mock_client import MockLLMClient
-    from aranmanai.ai.llm_client import LLMMessage
     from aranmanai.ai.prompts.chargesheet import build_chargesheet_prompt
     client = MockLLMClient()
     msgs = build_chargesheet_prompt(
@@ -67,9 +65,10 @@ def test_mock_llm_routes_cross_exam(tmp_env):
 
 
 def test_mock_llm_json_mode(tmp_env):
-    from aranmanai.ai.mock_client import MockLLMClient
-    from aranmanai.ai.llm_client import LLMMessage
     import json
+
+    from aranmanai.ai.llm_client import LLMMessage
+    from aranmanai.ai.mock_client import MockLLMClient
     client = MockLLMClient()
     msgs = [
         LLMMessage(role="system", content="Output JSON"),
@@ -81,8 +80,8 @@ def test_mock_llm_json_mode(tmp_env):
 
 
 def test_mock_llm_deterministic(tmp_env):
-    from aranmanai.ai.mock_client import MockLLMClient
     from aranmanai.ai.llm_client import LLMMessage
+    from aranmanai.ai.mock_client import MockLLMClient
     client = MockLLMClient()
     msgs = [LLMMessage(role="user", content="FIR section BNS 308")]
     r1 = client.complete(msgs)

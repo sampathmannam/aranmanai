@@ -5,9 +5,6 @@ real embeddings) are marked `slow` and skipped by default.
 """
 from __future__ import annotations
 
-import pytest
-
-
 # --- Detect ---
 
 def test_detect_script_tamil_unicode():
@@ -119,6 +116,7 @@ def test_translator_resolve_routed():
 def test_embedding_dataclass():
     """Embedding is a dataclass with text + vector + model."""
     import numpy as np
+
     from aranmanai.core.tamil import Embedding
     e = Embedding(text="hello", vector=np.zeros(384, dtype=np.float32), model="test")
     assert e.text == "hello"

@@ -1,15 +1,13 @@
 """Tests for the chargesheet vetting service (FIR gap-checker)."""
 from __future__ import annotations
 
-from datetime import datetime
-
 import pytest
 
 
 @pytest.fixture
 def case_with_witnesses(db_session, test_user):
     from aranmanai.db.models.case import Case, CaseStage, CaseStatus
-    from aranmanai.db.models.witness import Witness, WitnessType, WitnessCategory
+    from aranmanai.db.models.witness import Witness, WitnessCategory, WitnessType
     c = Case(
         id="vet-case-1", fir_no="FIR/2026/001", district="test-district",
         bns_sections=["BNS 103(1)"], bnss_sections=["BNSS 173(1)(a)"],
@@ -29,8 +27,8 @@ def case_with_witnesses(db_session, test_user):
 
 
 def test_vet_passes_when_all_required_present(db_session, case_with_witnesses):
-    from aranmanai.db.models.evidence import Evidence
     from aranmanai.ai.services.chargesheet_vetting import ChargesheetVettingService
+    from aranmanai.db.models.evidence import Evidence
     db_session.add(Evidence(
         id="ev-1", case_id="vet-case-1",
         description="Knife recovered from accused house under Section 27 BSA",
@@ -45,7 +43,7 @@ def test_vet_passes_when_all_required_present(db_session, case_with_witnesses):
 
 
 def test_vet_blocks_when_no_io_assigned(db_session):
-    from aranmanai.db.models.case import Case, CaseStage, CaseStatus
+    from aranmanai.db.models.case import Case, CaseStage
     c = Case(
         id="vet-case-2", fir_no="FIR/2026/002", district="test-district",
         bns_sections=["BNS 376"], stage=CaseStage.EVIDENCE,
@@ -87,7 +85,7 @@ def test_vet_flags_witnesses_without_161_statements(db_session, case_with_witnes
 
 def test_vet_too_early_in_stage(db_session, test_user):
     """Case still in INVESTIGATION stage → can't file chargesheet yet."""
-    from aranmanai.db.models.case import Case, CaseStage, CaseStatus
+    from aranmanai.db.models.case import Case, CaseStage
     c = Case(
         id="vet-case-3", fir_no="FIR/2026/003", district="test-district",
         bns_sections=["BNS 103"], stage=CaseStage.INVESTIGATION,

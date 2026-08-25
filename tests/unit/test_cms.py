@@ -36,10 +36,14 @@ def _make_case_with_hearing(db, test_user, days_ahead: int = 0, hostile_witnesse
 
 def test_daily_calendar_for_date_returns_today_hearings(db_session, test_user):
     _make_case_with_hearing(db_session, test_user, days_ahead=0)
-    from datetime import date
+
     from aranmanai.core.cms.daily_calendar import DailyCalendarService
     svc = DailyCalendarService(db_session)
-    entries = svc.for_date(date.today(), district="test-district")
+    # _make_case_with_hearing stamps the hearing via datetime.utcnow(); using
+    # date.today() (local time) here would mismatch by a day for ~5.5h of
+    # every 24h on an IST-clock machine (00:00-05:30 IST is still the
+    # previous UTC day) -- match the same clock the fixture data used.
+    entries = svc.for_date(datetime.utcnow().date(), district="test-district")
     assert len(entries) == 1
     e = entries[0]
     assert e.fir_no == "100/2026"
@@ -48,10 +52,10 @@ def test_daily_calendar_for_date_returns_today_hearings(db_session, test_user):
 
 def test_calendar_priority_critical_when_hostile_unprepped(db_session, test_user):
     case, _ = _make_case_with_hearing(db_session, test_user, days_ahead=0, hostile_witnesses=2)
-    from datetime import date
+
     from aranmanai.core.cms.daily_calendar import DailyCalendarService
     svc = DailyCalendarService(db_session)
-    entries = svc.for_date(date.today(), district="test-district")
+    entries = svc.for_date(datetime.utcnow().date(), district="test-district")
     assert len(entries) == 1
     assert entries[0].priority == "critical"
     assert entries[0].hostile_witnesses == 2
@@ -60,19 +64,19 @@ def test_calendar_priority_critical_when_hostile_unprepped(db_session, test_user
 
 def test_calendar_priority_high_when_risk_above_50(db_session, test_user):
     _make_case_with_hearing(db_session, test_user, days_ahead=0, risk=0.6)
-    from datetime import date
+
     from aranmanai.core.cms.daily_calendar import DailyCalendarService
     svc = DailyCalendarService(db_session)
-    entries = svc.for_date(date.today(), district="test-district")
+    entries = svc.for_date(datetime.utcnow().date(), district="test-district")
     assert entries[0].priority == "high"
 
 
 def test_calendar_district_filter(db_session, test_user):
     _make_case_with_hearing(db_session, test_user, days_ahead=0)
-    from datetime import date
+
     from aranmanai.core.cms.daily_calendar import DailyCalendarService
     svc = DailyCalendarService(db_session)
-    other = svc.for_date(date.today(), district="other-district")
+    other = svc.for_date(datetime.utcnow().date(), district="other-district")
     assert len(other) == 0
 
 
@@ -97,6 +101,7 @@ def test_bottleneck_detects_old_case(db_session, test_user):
 
 def test_timeline_builds_fir_and_hearing_events(db_session, test_user):
     from datetime import datetime
+
     from aranmanai.db.models.case import Case
     from aranmanai.db.models.hearing import Hearing
     case = Case(
@@ -122,10 +127,11 @@ def test_timeline_builds_fir_and_hearing_events(db_session, test_user):
 
 def test_sp_dashboard_snapshot_basic(db_session, test_user):
     from aranmanai.core.cms.sp_dashboard import SpDashboardService
-    from datetime import date
     _make_case_with_hearing(db_session, test_user, days_ahead=0)
     svc = SpDashboardService(db_session)
-    snap = svc.snapshot(district="test-district", as_of=date.today())
+    # See test_daily_calendar_for_date_returns_today_hearings for why this
+    # must match datetime.utcnow(), not local date.today().
+    snap = svc.snapshot(district="test-district", as_of=datetime.utcnow().date())
     assert snap.today_hearings == 1
     assert snap.district == "test-district"
     assert isinstance(snap.top_actions, list)

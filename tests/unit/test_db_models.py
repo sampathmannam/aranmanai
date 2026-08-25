@@ -13,7 +13,6 @@ def test_init_db_creates_all_tables(tmp_env):
 
 def test_create_and_query_case(db_session, test_user):
     from aranmanai.db.models.case import Case, CaseStage, CaseStatus
-    from aranmanai.db.models.user import UserRole
     case = Case(
         fir_no="123/2026",
         district="test-district",
@@ -54,6 +53,7 @@ def test_create_witness_with_encrypted_name(db_session, test_user):
 
 def test_create_hearing_attendance_tracking(db_session, test_user):
     from datetime import datetime
+
     from aranmanai.db.models.case import Case
     from aranmanai.db.models.hearing import Hearing
     case = Case(fir_no="125/2026", district="test-district", io_id=test_user.id)
@@ -76,13 +76,13 @@ def test_create_hearing_attendance_tracking(db_session, test_user):
 
 
 def test_create_evidence_with_sid(tmp_env):
+    from aranmanai.db import init_db
     from aranmanai.db.models.case import Case
     from aranmanai.db.models.evidence import Evidence, EvidenceChainStatus, EvidenceType, FslStatus
-    from aranmanai.db import init_db
     init_db()
     from aranmanai.db import SessionLocal
     from aranmanai.db.models.user import User, UserRole
-    from aranmanai.security import hash_password, encrypt_field
+    from aranmanai.security import encrypt_field, hash_password
     db = SessionLocal()
     try:
         user = User(

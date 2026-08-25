@@ -52,6 +52,7 @@ def test_get_case_404(client):
 
 def test_create_case_requires_auth(tmp_env, test_user):
     from fastapi.testclient import TestClient
+
     from aranmanai.api.main import create_app
     app = create_app()
     with TestClient(app) as c:

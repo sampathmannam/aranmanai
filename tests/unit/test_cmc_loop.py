@@ -1,7 +1,7 @@
 """Unit tests for the CMC daily action tracker — Kishore's accountability loop."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -10,7 +10,7 @@ import pytest
 def setup_users(db_session):
     """Create one SP, one IO, one PP for testing."""
     from aranmanai.db.models.user import User, UserRole
-    from aranmanai.security import hash_password, encrypt_field
+    from aranmanai.security import encrypt_field, hash_password
 
     sp = User(
         username="sp_test",
@@ -46,7 +46,7 @@ def setup_users(db_session):
 @pytest.fixture
 def setup_case(db_session, setup_users):
     """Create one case for testing."""
-    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.case import Case, CaseStage, CaseStatus
 
     c = Case(
         id="test-case-001",
@@ -144,8 +144,9 @@ def test_check_overdue_raises_escalation(db_session, setup_users, setup_case):
 
 
 def test_sp_review_case(db_session, setup_users, setup_case):
-    from aranmanai.ai.services.cmc_loop import CmcLoopService
     from datetime import date
+
+    from aranmanai.ai.services.cmc_loop import CmcLoopService
     svc = CmcLoopService(db_session)
     r = svc.sp_review_case(
         case_id=setup_case.id,
@@ -162,7 +163,6 @@ def test_sp_review_case(db_session, setup_users, setup_case):
 def test_daily_view(db_session, setup_users, setup_case):
     from aranmanai.ai.services.cmc_loop import CmcLoopService
     from aranmanai.db.models.coordination import ActionPriority
-    from datetime import date
     svc = CmcLoopService(db_session)
     m = svc.open_meeting(district="test-district", meeting_date=datetime.utcnow(), held_by=setup_users["sp"].id)
     svc.assign_action(
@@ -175,10 +175,13 @@ def test_daily_view(db_session, setup_users, setup_case):
         due_date=datetime.utcnow() + timedelta(hours=2),
         priority=ActionPriority.MEDIUM,
     )
-    v = svc.daily_view(district="test-district", target_date=date.today())
+    # Match datetime.utcnow() (used above to create the meeting), not local
+    # date.today() -- see test_cms.py for why these can mismatch by a day.
+    today = datetime.utcnow().date()
+    v = svc.daily_view(district="test-district", target_date=today)
     assert v.district == "test-district"
     assert v.n_actions_pending >= 1
-    assert v.date == date.today().isoformat()
+    assert v.date == today.isoformat()
 
 
 def test_escalation_acknowledge_and_resolve(db_session, setup_users, setup_case):

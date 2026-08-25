@@ -11,7 +11,7 @@ import pytest
 @pytest.fixture
 def users(db_session):
     from aranmanai.db.models.user import User, UserRole
-    from aranmanai.security import hash_password, encrypt_field
+    from aranmanai.security import encrypt_field, hash_password
     sp = User(
         username="sp_t", hashed_password=hash_password("t"),
         name_encrypted=encrypt_field("SP"), role=UserRole.SP,
@@ -62,7 +62,7 @@ def case(db_session, users):
 def test_pp_answer_recorded_separately_from_io(db_session, users, case):
     """PP answer is tracked on its own, distinct from IO's ActionItem.answer."""
     from aranmanai.ai.services.cmc_loop import CmcLoopService
-    from aranmanai.db.models.coordination import ActionItem, ActionPriority, ActionStatus, PpAnswer
+    from aranmanai.db.models.coordination import ActionPriority, PpAnswer
 
     svc = CmcLoopService(db_session)
     m = svc.open_meeting(district="test-district", meeting_date=datetime.utcnow(), held_by=users["sp"].id)

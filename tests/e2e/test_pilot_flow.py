@@ -5,7 +5,7 @@ services, log a hearing, compute risk, snapshot the SP dashboard.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 def test_full_pilot_flow(client):
@@ -22,16 +22,22 @@ def test_full_pilot_flow(client):
     case_id = r.json()["id"]
 
     # 2. Register 2 witnesses
-    w1 = client.post("/api/v1/witnesses", json={
+    client.post("/api/v1/witnesses", json={
         "case_id": case_id, "name": "Witness 1", "type": "eyewitness", "category": "supportive",
-    }).json()
+    })
     w2 = client.post("/api/v1/witnesses", json={
         "case_id": case_id, "name": "Witness 2", "type": "eyewitness", "category": "hostile",
         "hostile_reason": "Threat from accused family",
     }).json()
 
     # 3. Schedule hearing for today
-    today = datetime.utcnow().isoformat()
+    # Deliberately local datetime.now(), not datetime.utcnow(): the
+    # SP-dashboard endpoint this test exercises (step 6) determines "today"
+    # via local date.today() internally, so the hearing must be dated
+    # against the same clock to reliably land on "today" from the API's
+    # own point of view (matters for ~5.5h of every 24h on an IST-clock
+    # machine, where local and UTC calendar days differ).
+    today = datetime.now().isoformat()
     h = client.post("/api/v1/hearings", json={
         "case_id": case_id, "date": today, "stage": "hearing",
     })

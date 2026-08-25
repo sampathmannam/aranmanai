@@ -23,11 +23,12 @@ Covers:
 - v1.1: load test (50 concurrent case reads)
 """
 import os
-import requests
 import time
 import uuid
-from datetime import date, datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, timedelta
+
+import requests
 
 API = "http://127.0.0.1:8080/api/v1"
 
@@ -309,7 +310,7 @@ def test_f11_family_liaison():
     """
     _bind_to_real_db_for_test()
     from aranmanai.db import SessionLocal
-    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.case import Case, CaseStage, CaseStatus
     from aranmanai.db.models.user import User
     db = SessionLocal()
     try:
@@ -588,7 +589,7 @@ def test_v11_duplicate_fir_in_same_district_rejected():
     """v1.1: inserting a case with the same fir_no + district must fail."""
     _bind_to_real_db_for_test()
     from aranmanai.db import SessionLocal
-    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.case import Case, CaseStage, CaseStatus
     from aranmanai.db.models.user import User
     db = SessionLocal()
     try:
@@ -620,14 +621,21 @@ def test_v11_duplicate_fir_in_same_district_rejected():
             sp_id=admin.id,
         )
         db.add(dup)
+        # try/except/ELSE (not a bare try/except) is required here: the
+        # duplicate-was-allowed failure must NOT be raised from inside the
+        # try block, or it would immediately be re-caught by this same
+        # except clause -- and its own message contains "UNIQUE" and
+        # "CONSTRAINT", which would make the assertion below pass on
+        # itself, silently defeating this entire test.
         try:
             db.commit()
-            assert False, "UNIQUE constraint did not fire — duplicate was allowed"
         except Exception as exc:
             msg = str(exc).upper()
             assert "UNIQUE" in msg or "CONSTRAINT" in msg, (
                 f"expected UNIQUE constraint failure, got: {exc}"
             )
+        else:
+            raise AssertionError("UNIQUE constraint did not fire — duplicate was allowed")
     finally:
         db.rollback()
         db.close()
@@ -637,7 +645,7 @@ def test_v11_same_fir_in_different_district_allowed():
     """v1.1: same fir_no in a different district is allowed (UNIQUE is per-district)."""
     _bind_to_real_db_for_test()
     from aranmanai.db import SessionLocal
-    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.case import Case, CaseStage, CaseStatus
     from aranmanai.db.models.user import User
     db = SessionLocal()
     try:
@@ -675,7 +683,7 @@ def test_v11_f11_rejects_non_pocso_case():
     """v1.1: F11 family-liaison on a non-POCSO/304B case must return 400."""
     _bind_to_real_db_for_test()
     from aranmanai.db import SessionLocal
-    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.case import Case, CaseStage, CaseStatus
     from aranmanai.db.models.user import User
     db = SessionLocal()
     try:
@@ -709,7 +717,7 @@ def test_v11_f11_accepts_pocso_case():
     """v1.1: F11 family-liaison on a POCSO-flagged case must return 200."""
     _bind_to_real_db_for_test()
     from aranmanai.db import SessionLocal
-    from aranmanai.db.models.case import Case, CaseStatus, CaseStage
+    from aranmanai.db.models.case import Case, CaseStage, CaseStatus
     from aranmanai.db.models.user import User
     db = SessionLocal()
     try:

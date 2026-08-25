@@ -7,13 +7,10 @@ downloads or audio files. Heavy tests (real STT, TTS) are marked
 from __future__ import annotations
 
 import math
-import struct
 import wave
 from pathlib import Path
 
 import numpy as np
-import pytest
-
 
 # --- VAD ---
 
@@ -72,8 +69,8 @@ def test_stt_languages_constant():
 
 def test_transcription_result_to_dict():
     """TranscriptionResult.to_dict should be JSON-serializable."""
+
     from aranmanai.core.voice import TranscriptionResult
-    import numpy as np
     r = TranscriptionResult(
         text="Hello world",
         language="en",
@@ -188,6 +185,7 @@ def test_looks_like_audio_rejects_too_short():
 def test_transcribe_endpoint_rejects_non_audio_with_415(tmp_env):
     """POST /api/v1/voice/transcribe with garbage bytes named .wav -> 415."""
     from fastapi.testclient import TestClient
+
     from aranmanai.api.main import create_app
     app = create_app()
     with TestClient(app) as c:
@@ -203,6 +201,7 @@ def test_transcribe_endpoint_rejects_non_audio_with_415(tmp_env):
 def test_pipeline_endpoint_rejects_non_audio_with_415(tmp_env):
     """POST /api/v1/voice/pipeline with garbage bytes named .wav -> 415."""
     from fastapi.testclient import TestClient
+
     from aranmanai.api.main import create_app
     app = create_app()
     with TestClient(app) as c:

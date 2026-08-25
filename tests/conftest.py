@@ -1,11 +1,10 @@
 """Pytest fixtures: temp DB, mock LLM, test client."""
 from __future__ import annotations
 
-import os
 import shutil
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -46,7 +45,7 @@ def db_session(tmp_env) -> Iterator:
     """Initialize the DB and yield a session. Use this in any test that
     needs the database.
     """
-    from aranmanai.db import init_db, SessionLocal
+    from aranmanai.db import SessionLocal, init_db
     init_db()
     session = SessionLocal()
     try:
@@ -56,10 +55,10 @@ def db_session(tmp_env) -> Iterator:
 
 
 @pytest.fixture
-def test_user(db_session) -> "User":  # type: ignore[name-defined]
+def test_user(db_session) -> User:  # type: ignore[name-defined]  # noqa: F821 -- `User` is imported lazily in the fixture body; safe because `from __future__ import annotations` (line 2) defers this annotation to a string, never evaluated at runtime
     """Create a test admin user."""
     from aranmanai.db.models.user import User, UserRole
-    from aranmanai.security import hash_password, encrypt_field
+    from aranmanai.security import encrypt_field, hash_password
     user = User(
         username="test_admin",
         hashed_password=hash_password("test_password_123"),
@@ -85,6 +84,7 @@ def auth_token(test_user) -> str:
 def client(tmp_env, test_user, auth_token) -> Iterator:
     """FastAPI TestClient with auth token pre-set."""
     from fastapi.testclient import TestClient
+
     from aranmanai.api.main import create_app
     app = create_app()
     with TestClient(app) as c:
