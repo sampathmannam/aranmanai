@@ -1,7 +1,18 @@
 # Changelog
 
-Consolidates two consecutive production-readiness passes. Not every commit is
-listed individually — see `git log` for the full history.
+Consolidates three consecutive production-readiness passes. Not every commit
+is listed individually — see `git log` for the full history.
+
+## 2026-08-26 (follow-up) — sp_voice_dashboard prompt sanitization
+
+Closed the one item the previous entry left explicitly unverified: H-4's
+`sp_voice_dashboard.py` half. `_parse_command` now sanitizes the SP's command
+text via `sanitize_for_llm()` before it reaches the LLM (the original,
+unsanitized text is still kept on `raw_text` for audit fidelity). The
+exploitable surface was already narrow — SP-authenticated only, and the LLM's
+`intent` output is constrained to a fixed whitelist — but this closes it
+anyway for defense-in-depth and consistency with every other prompt builder.
+1 new test. 256/256 passing, mypy/ruff clean.
 
 ## 2026-08-26 — Remaining audit findings + real-bug cleanup
 

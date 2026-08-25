@@ -445,17 +445,17 @@ curl -X POST http://api:8080/api/v1/ai/sp-voice-dashboard \
 
 **Remediation**: Same as H-1 — sanitize user input and wrap in clear delimiters in the prompt template.
 
-**Status: FIXED for complaint intake (2026-08-26, see H-1).** `sp_voice_dashboard.py`
-was NOT modified for sanitization in this pass — worth a follow-up look. Its
-`_parse_command` passes the raw voice/text command as a separate `user`-role
-message (not f-string-interpolated into the system prompt) and constrains the
-LLM to a fixed JSON schema whose `intent` field is only ever compared against a
-fixed set of known strings in an `if/elif` chain (unrecognized values fall
-through to a safe default dashboard) — so a malformed/injected `intent` cannot
-itself trigger unintended behavior. However, the command text itself is still
-sent to the LLM unsanitized, and `parsed_command`/`raw_text` are echoed back into
-the SP-facing response — this hasn't been checked for a reflected-injection or
-narrative-manipulation angle. Treat as unverified, not as fixed.
+**Status: FIXED (2026-08-26, both halves).** `complaint_intake.py` (see H-1) and
+now `sp_voice_dashboard.py`'s `_parse_command` — the SP's command text is
+sanitized via `sanitize_for_llm()` before it becomes the LLM's user-turn
+content. Endpoint access is already SP-authenticated only, and the LLM's
+`intent` output is constrained to a fixed `if/elif` whitelist (unrecognized
+values fall through to a safe default dashboard), so the exploitable surface
+was narrow to begin with — this closes it anyway as defense-in-depth against a
+compromised session/device, for consistency with every other prompt builder.
+The original, unsanitized text is still preserved on `raw_text` for audit
+fidelity — only the LLM-facing copy is sanitized. Test:
+`tests/unit/test_sp_voice_dashboard.py::test_parse_command_sanitizes_injection_before_reaching_llm`.
 
 ---
 
@@ -712,15 +712,15 @@ header.b64url({"alg":"none"}).decode() + "." + payload + "."
 | Severity | Count | Status (2026-08-26) |
 |---|---|---|
 | 🔴 Critical | 5 | **5/5 fixed** (C-1..C-5) |
-| 🟠 High | 5 | **4/5 fixed** (H-1, H-3, H-4, H-5 fixed; H-2 fixed for `sp_review_case` and `pilot_metrics` — the two exploits actually named in this report) |
+| 🟠 High | 5 | **5/5 fixed** (H-1, H-3, H-4 (both halves), H-5 fixed; H-2 fixed for `sp_review_case` and `pilot_metrics` — the two exploits actually named in this report) |
 | 🟡 Medium | 5 | **5/5 fixed** (M-1..M-5; M-2 moot — the affected code was deleted) |
 | 🔵 Low | 2 | **2/2 fixed** (L-1, L-2) |
 
 **Net result as of 2026-08-26**: every finding in this report has a concrete,
-verified fix in code, with automated tests proving it, except the
-`sp_voice_dashboard.py` half of H-4 (flagged above as unverified, not fixed) and
-Kishore-review item 6 (rate-limiter cross-process safety, tracked separately in
-[`KISHORE_REVIEW_TRACKING.md`](KISHORE_REVIEW_TRACKING.md) — also now fixed).
+verified fix in code, with automated tests proving it — including the
+`sp_voice_dashboard.py` half of H-4 (fixed same-day, after initially being
+left unverified) and Kishore-review item 6 (rate-limiter cross-process safety,
+tracked separately in [`KISHORE_REVIEW_TRACKING.md`](KISHORE_REVIEW_TRACKING.md)).
 The unauthenticated `/auth/register` was still the most dangerous single finding
 at the time of the original audit — full admin creation gone in 5 lines of code.
 

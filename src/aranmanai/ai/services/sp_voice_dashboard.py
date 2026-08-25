@@ -100,11 +100,20 @@ class SpVoiceDashboardService:
         self.llm = llm or get_llm_client()
 
     def _parse_command(self, text: str, language: str = "en") -> SpVoiceCommand:
-        """Use LLM to parse the natural-language command into structured intent."""
+        """Use LLM to parse the natural-language command into structured intent.
+
+        H-4 fix: the SP's command text is sanitized before it reaches the LLM
+        (known injection patterns neutralized) even though this endpoint is
+        SP-authenticated only -- defense-in-depth against a compromised
+        session or device, and consistency with every other prompt builder.
+        `raw_text` on the returned command keeps the original, unsanitized
+        text for audit purposes.
+        """
         from aranmanai.ai.llm_client import LLMMessage
+        from aranmanai.ai.prompts._sanitize import sanitize_for_llm
         prompt = [
             LLMMessage(role="system", content=_SP_PROMPT),
-            LLMMessage(role="user", content=text),
+            LLMMessage(role="user", content=sanitize_for_llm(text)),
         ]
         response = self.llm.complete(prompt, temperature=0.1, max_tokens=256)
         import json
