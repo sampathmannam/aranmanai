@@ -22,10 +22,12 @@ import json
 import os
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
+
+from filelock import FileLock, Timeout
 
 from aranmanai.observability import get_logger
 
@@ -33,10 +35,17 @@ log = get_logger(__name__)
 
 # C-4 fix: in-process thread lock to serialise appends.
 # Prevents the "two threads read the same _last_hash, both write
-# with the same prev_hash" race. For multi-process deployments,
-# migrate to SQLite (atomic writes via row-level locking) - the chain
-# logic stays the same.
+# with the same prev_hash" race. Held INSIDE the per-instance
+# cross-process FileLock (see AuditLog.append): the file lock is the
+# real multi-writer guard, the thread lock is belt-and-suspenders for
+# threads within one process (and sidesteps having to separately prove
+# filelock's own thread-safety for one FileLock shared across threads).
 _audit_lock = threading.Lock()
+
+# Cross-process append lock timeout (seconds). Bounded so a wedged
+# holder can't hang a request forever; on expiry we deliberately let
+# Timeout propagate rather than dropping a compliance-critical write.
+_AUDIT_LOCK_TIMEOUT_SEC = 10
 
 # Genesis hash — the prev_hash of the very first audit entry.
 # Doesn't need to be secret; just a stable starting point.
@@ -117,7 +126,7 @@ class AuditLog:
 
     # P1 AuditLog memoization: cache the constructed AuditLog per path.
     # Avoids re-reading the entire file on every API call (O(n^2) lifetime).
-    _instances: dict = {}
+    _instances: ClassVar[dict] = {}
 
     def __new__(cls, log_path: Path):
         key = str(log_path.resolve())
@@ -135,6 +144,14 @@ class AuditLog:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.log_path.exists():
             self.log_path.touch()
+        # Cross-process append lock. Sidecar file next to the log
+        # (`<log>.lock`); the `.lock` suffix deliberately does NOT match
+        # the `<log>.N` rotation pattern that verify_all() globs over, so
+        # the auditor's rotation walk never mistakes it for a log file.
+        # Constructed once per AuditLog instance (instances are path-keyed
+        # and memoized in _instances) — never re-created per append().
+        self._lock_path = self.log_path.with_name(self.log_path.name + ".lock")
+        self._file_lock = FileLock(str(self._lock_path), timeout=_AUDIT_LOCK_TIMEOUT_SEC)
         self._last_hash = self._read_last_hash()
 
     def _read_last_hash(self) -> str:
@@ -155,6 +172,56 @@ class AuditLog:
                     continue
         return last_hash
 
+    def _read_last_hash_from_tail(self) -> str:
+        """Read the last entry's hash by seeking from the end of the file.
+
+        Unlike `_read_last_hash` (which scans the whole file — correct and
+        needed for __init__/verify), this walks backward in bounded chunks
+        to find only the last complete line, so it is O(1)-ish per append
+        rather than O(n). It is called INSIDE the append lock on every
+        append to get the *true* on-disk last hash — never trusting a
+        possibly-stale in-memory `self._last_hash` that another process may
+        have invalidated. Returns GENESIS_HASH for an empty/missing file.
+        """
+        if not self.log_path.exists() or self.log_path.stat().st_size == 0:
+            return GENESIS_HASH
+        chunk_size = 4096
+        with self.log_path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            file_size = f.tell()
+            buffer = b""
+            pos = file_size
+            last_line: bytes | None = None
+            while pos > 0:
+                read_size = min(chunk_size, pos)
+                pos -= read_size
+                f.seek(pos)
+                buffer = f.read(read_size) + buffer
+                # A complete last line needs a newline separating it from
+                # earlier content. Strip any trailing newlines first so a
+                # file ending in "\n" doesn't yield an empty final line.
+                stripped = buffer.rstrip(b"\n")
+                nl = stripped.rfind(b"\n")
+                if nl != -1:
+                    last_line = stripped[nl + 1:]
+                    break
+                # No newline yet and we've reached the start: the whole
+                # buffer is the (single) last line.
+                if pos == 0:
+                    last_line = stripped
+                    break
+            if last_line is None:
+                return GENESIS_HASH
+            text = last_line.strip()
+            if not text:
+                return GENESIS_HASH
+            try:
+                entry = json.loads(text.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                log.warning("audit.invalid_tail_line", line=text[:100])
+                return GENESIS_HASH
+            return entry.get("hash", GENESIS_HASH)
+
     def append(
         self,
         action: AuditAction,
@@ -167,38 +234,67 @@ class AuditLog:
     ) -> str:
         """Append a new entry. Returns the new entry's log_id.
 
-        C-4 fix: held under _audit_lock to serialise concurrent appends
-        from multiple threads. The entire critical section (read prev,
-        compute hash, write, update _last_hash) is inside the lock to
-        prevent the "two threads write the same prev_hash" race.
-        For multi-process deployments, migrate to SQLite.
+        Concurrency (multi-process, e.g. `uvicorn ... --workers 4`):
+        the whole critical section runs under a cross-process FileLock
+        (outermost) with the in-process thread lock nested inside. The
+        real fix for the multi-writer chain-corruption bug is that we
+        re-read the TRUE last hash from disk (via the bounded tail read)
+        on every append while the lock is held, instead of trusting the
+        in-memory `self._last_hash`, which goes stale the instant a
+        different process appends. `self._last_hash` is kept only as a
+        same-process fast-path cache and is never used as prev_hash
+        without the fresh tail-read happening first inside the lock.
+
+        On FileLock timeout we let filelock.Timeout propagate rather than
+        silently dropping the write: a lost DPDP §8(3) audit entry is a
+        worse failure mode than a request erroring out.
+
+        P1 M-3 fix: open binary mode for portable fsync on Windows.
+        Text-mode fsync is a partial no-op on Windows because Python's
+        text wrapper uses WriteFile not write.
         """
-        # P1 M-3 fix: open binary mode for portable fsync on Windows.
-        # Text-mode fsync is a partial no-op on Windows because Python's
-        # text wrapper uses WriteFile not write.
         line_bytes: bytes
-        with _audit_lock:
-            log_id = str(uuid.uuid4())
-            ts = datetime.now(timezone.utc).isoformat()
-            entry_core: dict[str, Any] = {
-                "log_id": log_id,
-                "timestamp": ts,
-                "actor_id": actor_id,
-                "action": action.value,
-                "subject_id": subject_id,
-                "fields_used": fields_used or [],
-                "success": success,
-                "error": error,
-                "metadata": metadata or {},
-            }
-            new_hash = _hash_entry(self._last_hash, entry_core)
-            full_entry = {**entry_core, "prev_hash": self._last_hash, "hash": new_hash}
-            line_bytes = (json.dumps(full_entry, default=str) + "\n").encode("utf-8")
-            with self.log_path.open("ab") as f:
-                f.write(line_bytes)
-                f.flush()
-                os.fsync(f.fileno())  # now durable on Linux + Windows
-                self._last_hash = new_hash
+        try:
+            # Intentionally nested (not a single combined `with`): the file
+            # lock MUST be the outermost guard and the thread lock the
+            # innermost. noqa SIM117 — the nesting expresses that ordering.
+            with self._file_lock:  # cross-process (outermost)  # noqa: SIM117
+                with _audit_lock:  # in-process threads (innermost)
+                    # Always read the fresh on-disk last hash inside the
+                    # lock — never trust a possibly-stale cache.
+                    prev_hash = self._read_last_hash_from_tail()
+                    log_id = str(uuid.uuid4())
+                    ts = datetime.now(UTC).isoformat()
+                    entry_core: dict[str, Any] = {
+                        "log_id": log_id,
+                        "timestamp": ts,
+                        "actor_id": actor_id,
+                        "action": action.value,
+                        "subject_id": subject_id,
+                        "fields_used": fields_used or [],
+                        "success": success,
+                        "error": error,
+                        "metadata": metadata or {},
+                    }
+                    new_hash = _hash_entry(prev_hash, entry_core)
+                    full_entry = {**entry_core, "prev_hash": prev_hash, "hash": new_hash}
+                    line_bytes = (json.dumps(full_entry, default=str) + "\n").encode("utf-8")
+                    with self.log_path.open("ab") as f:
+                        f.write(line_bytes)
+                        f.flush()
+                        os.fsync(f.fileno())  # now durable on Linux + Windows
+                    # Same-process fast-path cache only. Correctness never
+                    # depends on this — the next append re-reads from disk.
+                    self._last_hash = new_hash
+        except Timeout:
+            # Bounded wait exceeded (holder wedged/crashed uncleanly).
+            # Propagate — do NOT drop a compliance-critical audit write.
+            log.error(
+                "audit.lock_timeout",
+                log_path=str(self.log_path),
+                timeout_sec=_AUDIT_LOCK_TIMEOUT_SEC,
+            )
+            raise
         log.info(
             "audit.appended",
             log_id=log_id,
@@ -269,7 +365,7 @@ class AuditLog:
                 break
         # Oldest first
         rotated.sort(key=lambda p: int(p.name.split(".")[-1]), reverse=True)
-        files_to_check = rotated + [base]
+        files_to_check = [*rotated, base]
         total = 0
         for f in files_to_check:
             prev_hash = GENESIS_HASH

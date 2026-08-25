@@ -34,6 +34,7 @@ dependencies = [
     "passlib==1.7.4",
     "bcrypt>=4.0,<5.0",  # pin <5 — passlib 1.7.4 reads bcrypt.__about__ which was removed in 5.x
     "cryptography==43.0.3",
+    "filelock==3.32.4",  # cross-process lock for the hash-chained audit log (multi-worker uvicorn safety)
     "pytest==8.3.3",
     "pytest-asyncio==0.24.0",
     "pytest-cov==6.0.0",

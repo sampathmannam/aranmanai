@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,6 +69,32 @@ class Settings(BaseSettings):
     # ── DPDP / Audit ──
     enable_audit_log: bool = True
     audit_log_path: Path = Path("data/audit.log")
+
+    @field_validator("audit_log_path")
+    @classmethod
+    def _audit_log_path_safe(cls, v: Path, info: ValidationInfo) -> Path:
+        # M-3 fix: the tamper-evident audit log must live on durable
+        # storage. Reject pointing it at the OS temp dir (the one concrete
+        # attack the security audit named — an ephemeral location that
+        # loses the DPDP §8(3) chain on reboot/cleanup).
+        #
+        # Scoped to production only: the hermetic test suite legitimately
+        # isolates every run under the OS temp dir (see tests/conftest.py
+        # tmp_env, which uses tempfile.mkdtemp), so an unconditional ban
+        # would make the audit log un-testable. `environment` is defined
+        # above this field, so it is already validated and present in
+        # info.data by the time this runs.
+        resolved = v.resolve()
+        if info.data.get("environment") != "production":
+            return resolved
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        if resolved == temp_root or temp_root in resolved.parents:
+            raise ValueError(
+                f"ARANMANAI_AUDIT_LOG_PATH must not be under the OS temp directory "
+                f"({temp_root}); the tamper-evident audit log needs durable storage. "
+                f"Got: {resolved}"
+            )
+        return resolved
 
     # ── Security ──
     jwt_secret: str = ""  # MUST be set via ARANMANAI_JWT_SECRET env var
@@ -138,6 +165,16 @@ class Settings(BaseSettings):
             self.llm_model_path.parent,
         ]:
             path.mkdir(parents=True, exist_ok=True)
+        # M-3: verify the audit log's directory is actually writable. A
+        # field_validator must stay side-effect-free, so this runtime probe
+        # (which needs the dir to already exist) lives here instead. Fail
+        # loudly at startup rather than silently losing audit writes later.
+        audit_parent = self.audit_log_path.parent
+        if not os.access(str(audit_parent), os.W_OK):
+            raise RuntimeError(
+                f"Audit log directory is not writable: {audit_parent}. "
+                f"The DPDP §8(3) audit log cannot be persisted here."
+            )
 
 
 @lru_cache(maxsize=1)

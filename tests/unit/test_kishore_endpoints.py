@@ -24,7 +24,6 @@ Covers:
 """
 import os
 import requests
-import threading
 import time
 import uuid
 from datetime import date, datetime, timedelta
@@ -512,30 +511,12 @@ def test_c3_register_works_with_admin_token():
 
 
 # ---------- C-4: audit log race ----------
-
-def test_c4_audit_chain_survives_concurrent_writes():
-    """C-4 fix: 8 threads x 20 writes must verify cleanly."""
-    import os
-    # The test runs from a different cwd than the app; .env lookup needs
-    # the project root. Set the env vars explicitly so the Settings
-    # constructor succeeds.
-    os.environ.setdefault("ARANMANAI_DB_KEY", "dev-only-change-me-in-prod-dbkey-2f7c9a4e8b1d3f5a")
-    os.environ.setdefault("ARANMANAI_JWT_SECRET", "dev-only-change-me-in-prod-jwt-c4e8a1d9f2b3")
-    import sys
-    sys.path.insert(0, "src")
-    from aranmanai.security.audit import AuditLog, AuditAction
-    from aranmanai.config import get_settings
-    log = AuditLog(get_settings().audit_log_path)
-    def spam():
-        for i in range(20):
-            log.append(
-                AuditAction.READ_CASE, actor_id="race-test", subject_id=f"c-{i}"
-            )
-    threads = [threading.Thread(target=spam) for _ in range(8)]
-    for t in threads: t.start()
-    for t in threads: t.join()
-    ok, msg = log.verify()
-    assert ok, f"chain broken: {msg}"
+# NOTE: the audit-log concurrency tests (thread- and process-level chain
+# integrity) live in tests/unit/test_audit.py, which constructs AuditLog
+# on an isolated tmp_path. They were moved out of this file because this
+# suite's live-server/real-DB idiom had them (wrongly) operating on the
+# real configured `data/audit.log` — a test-hygiene hazard that could
+# destroy real audit history. See test_audit.py for the replacements.
 
 
 # ---------- H-3: rate limit ----------
@@ -758,43 +739,11 @@ def test_v11_f11_accepts_pocso_case():
 
 
 # ---------- v1.1: audit log verify_all() rotation-aware ----------
-
-def test_v11_audit_verify_all_walks_rotated_files():
-    """v1.1: verify_all() returns OK even when the log has been rotated."""
-    import os, sys
-    sys.path.insert(0, "src")
-    os.environ.setdefault("ARANMANAI_DB_KEY", "dev-only-change-me-in-prod-dbkey-2f7c9a4e8b1d3f5a")
-    os.environ.setdefault("ARANMANAI_JWT_SECRET", "dev-only-change-me-in-prod-jwt-c4e8a1d9f2b3")
-    from pathlib import Path
-    from aranmanai.security.audit import AuditLog, AuditAction
-    from aranmanai.config import get_settings
-    log = AuditLog(get_settings().audit_log_path)
-    # Append 5 entries to the current file
-    for i in range(5):
-        log.append(AuditAction.READ_CASE, actor_id="rotate-test", subject_id=f"r-{i}")
-    # Simulate rotation: copy current → audit.log.1, then truncate current
-    current = log.log_path
-    rotated = current.with_suffix(current.suffix + ".1")
-    rotated.write_bytes(current.read_bytes())
-    # Truncate the current file
-    current.write_bytes(b"")
-    # Re-instantiate (re-reads last_hash from the now-empty current file)
-    AuditLog._instances.clear()  # bypass memoization for the test
-    log2 = AuditLog(get_settings().audit_log_path)
-    # Append 3 more entries to the new current file
-    for i in range(3):
-        log2.append(AuditAction.READ_CASE, actor_id="rotate-test", subject_id=f"r-new-{i}")
-    # verify() on the current file alone: should pass (new chain from GENESIS)
-    ok_curr, _ = log2.verify()
-    assert ok_curr, "current file alone must verify"
-    # verify_all() must walk both files and pass
-    ok_all, msg_all = log2.verify_all()
-    assert ok_all, f"verify_all() must pass across rotated files: {msg_all}"
-    assert "2 file(s)" in msg_all or "2 files" in msg_all, f"expected 2 files, got: {msg_all}"
-    # Cleanup
-    AuditLog._instances.clear()
-    if rotated.exists():
-        rotated.unlink()
+# NOTE: test_v11_audit_verify_all_walks_rotated_files was moved to
+# tests/unit/test_audit.py and rewritten against an isolated tmp_path.
+# The original wrongly operated on the real configured audit log and
+# `unlink()`d a rotated copy of it — which would have destroyed real
+# audit history if ever run against a production-configured path.
 
 
 # ---------- v1.1: load test ----------
