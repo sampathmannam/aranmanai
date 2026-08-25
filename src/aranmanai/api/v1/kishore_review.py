@@ -21,18 +21,15 @@ Each endpoint set addresses one of the gaps:
 """
 from __future__ import annotations
 
-import math
-import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import desc, or_
 
 from aranmanai.api.deps import CurrentUser, DbSession, IoUser, SpUser
-from aranmanai.db.models.case import Case, CaseStatus
-from aranmanai.db.models.coordination import ActionItem
+from aranmanai.db.models.case import Case
 from aranmanai.db.models.kishore_review import (
     CaseFamilyLiaison,
     CaseTransfer,
@@ -55,6 +52,28 @@ router = APIRouter(prefix="/kishore", tags=["kishore-review"])
 
 def _audit() -> AuditLog:
     return AuditLog(get_settings().audit_log_path)
+
+
+def _assert_district_match(case_id: str, user, db) -> None:
+    """P1 IDOR fix (H-2 from security audit): reject cross-district access
+    for non-admin users on a Case-scoped endpoint.
+
+    - ADMIN: bypass (legitimate cross-district access).
+    - Case not found: pass through (the endpoint will 404 itself).
+    - District mismatch: 403.
+    - Deputation: not handled here — deputed users are routed through
+      the deputation-aware F4 listing, not these per-case endpoints.
+    """
+    if user.role == UserRole.ADMIN.value:
+        return
+    case = db.get(Case, case_id)
+    if not case:
+        return
+    if case.district != user.district:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot access case {case_id} in district {case.district}",
+        )
 
 
 # ──────────────────────────────────────────────────────────────
@@ -86,11 +105,28 @@ class HelplineGPSResponse(BaseModel):
 def record_helpline_gps(
     helpline_log_id: str,
     req: HelplineGPSRequest,
+    user: IoUser,
     db: DbSession,
 ) -> HelplineGPSResponse:
     """F1 fix: record GPS coordinates and auto-resolve the nearest police
     station. The right PSO gets pinged, not the district SP.
+
+    P0-2: now requires auth (IoUser). P2 fix: validates the helpline
+    call exists before the FK insert (was producing a raw 500).
     """
+    # P2 fix: validate FK before insert (was a raw FOREIGN KEY constraint
+    # error otherwise). HelplineCall.id is the FK target.
+    helpline = db.get(HelplineCall, helpline_log_id)
+    if not helpline:
+        raise HTTPException(status_code=404, detail=f"Helpline call {helpline_log_id} not found")
+    # P1 fix: the GPS-adding user must be in the same district as the
+    # helpline call (or admin). Otherwise an IO from district A could
+    # associate GPS with a district B helpline call.
+    if user.role != UserRole.ADMIN.value and helpline.caller_district != user.district:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot add GPS to helpline in district {helpline.caller_district}",
+        )
     row = HelplineCallGPS(
         helpline_log_id=helpline_log_id,
         caller_lat=req.caller_lat,
@@ -145,7 +181,10 @@ def set_charge_sheet_deadline(
 ) -> DeadlineResponse:
     """F2 fix: BNS 173(2) - 60 days for offences <= 10 years, 90 days otherwise.
     Missed deadline = default bail + acquittal risk.
+
+    P1 IDOR: enforce district match.
     """
+    _assert_district_match(case_id, user, db)
     days_limit = 60 if req.max_sentence_years <= 10 else 90
     deadline_date = req.fir_date + timedelta(days=days_limit)
     days_remaining = (deadline_date - date.today()).days
@@ -168,6 +207,9 @@ def set_charge_sheet_deadline(
         existing.max_sentence_years = req.max_sentence_years
         existing.deadline = datetime.combine(deadline_date, datetime.min.time())
         existing.is_overdue = days_remaining < 0
+        # P3 fix: reset alert flags when fir_date changes (avoid stale alerts)
+        existing.alert_7d_sent = False
+        existing.alert_1d_sent = False
     else:
         existing = ChargeSheetDeadline(
             case_id=case_id,
@@ -203,7 +245,10 @@ def set_charge_sheet_deadline(
 
 @router.post("/cases/{case_id}/mark-chargesheet-filed")
 def mark_chargesheet_filed(case_id: str, user: IoUser, db: DbSession) -> dict:
-    """F2: mark the charge-sheet as filed; clears the deadline."""
+    """F2: mark the charge-sheet as filed; clears the deadline.
+    P1 IDOR: enforce district match.
+    """
+    _assert_district_match(case_id, user, db)
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(404, "Case not found")
@@ -270,11 +315,16 @@ def list_cases(
     Without this, opening Cases with 1,200+ cases is unusable.
     """
     q = db.query(Case)
-    # F14: deputation - if user on deputation, show both home + deputation
+    # F14: deputation - if user on deputation, show both home + deputation.
+    # P1 fix: only consider deputations whose end_date hasn't passed
+    # (otherwise a 6-month-old deputation keeps the cross-district
+    # access open forever).
+    now = datetime.utcnow()
     districts_visible = [user.district]
     deputations = db.query(Deputation).filter(
         Deputation.user_id == user.id,
         Deputation.is_active == True,
+        Deputation.end_date >= now,
     ).all()
     for d in deputations:
         if d.home_district not in districts_visible:
@@ -307,8 +357,7 @@ def list_cases(
 
     items: list[CaseListItem] = []
     for c in rows:
-        io_user = db.get(User, c.io_id) if c.io_id else None
-        pp_user = db.get(User, c.pp_id) if c.pp_id else None
+        # P3 fix: use relationship (lazy=joined) instead of extra db.get
         items.append(CaseListItem(
             id=c.id,
             fir_no=c.fir_no,
@@ -317,8 +366,8 @@ def list_cases(
             district=c.district,
             court=c.court,
             judge=c.judge,
-            io_username=io_user.username if io_user else None,
-            pp_username=pp_user.username if pp_user else None,
+            io_username=c.io.username if c.io else None,
+            pp_username=c.pp.username if c.pp else None,
             next_hearing=c.next_hearing.isoformat() if c.next_hearing else None,
             risk_score=c.risk_score,
             charge_sheet_deadline=c.charge_sheet_deadline.isoformat() if c.charge_sheet_deadline else None,
@@ -360,7 +409,20 @@ def save_charge_sheet_version(
     user: IoUser,
     db: DbSession,
 ) -> ChargeSheetVersionResponse:
-    """F5 fix: save a new version. Versions are append-only."""
+    """F5: append-only version history. P1 IDOR: enforce district match.
+
+    P2 fix: the previous read-then-write version_num was a race
+    (two concurrent saves on the same case could both compute the
+    same next_n and the second commit would either fail on a unique
+    constraint or silently overwrite). Now we hold a per-case row
+    lock on the parent Case so concurrent writes serialise.
+    """
+    _assert_district_match(case_id, user, db)
+    # Lock the Case row for the duration of this transaction.
+    # SQLite serialises anyway, but on Postgres this prevents the race.
+    case = db.query(Case).filter(Case.id == case_id).with_for_update().first()
+    if not case:
+        raise HTTPException(404, "Case not found")
     # Find next version number
     last = (
         db.query(ChargeSheetVersion)
@@ -397,8 +459,13 @@ def save_charge_sheet_version(
 def list_charge_sheet_versions(
     case_id: str,
     db: DbSession,
+    user: CurrentUser,
 ) -> list[ChargeSheetVersionResponse]:
-    """F5: list all versions of the charge-sheet for this case."""
+    """F5: list all versions of the charge-sheet for this case.
+
+    P0-2 fix: enforce district match (H-2 IDOR).
+    """
+    _assert_district_match(case_id, user, db)
     rows = (
         db.query(ChargeSheetVersion)
         .filter(ChargeSheetVersion.case_id == case_id)
@@ -437,7 +504,10 @@ def pilot_enroll(
     user: SpUser,
     db: DbSession,
 ) -> dict:
-    """F6 fix: set the case's pilot_flag instead of separate PilotCase table."""
+    """F6 fix: set the case's pilot_flag instead of separate PilotCase table.
+    P1 IDOR: enforce district match.
+    """
+    _assert_district_match(case_id, user, db)
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(404, "Case not found")
@@ -465,8 +535,11 @@ def pilot_enroll(
 
 class CaseEntryTranslateRequest(BaseModel):
     case_id: str
-    text: str
-    source_language: str = "ta"  # 'ta' | 'hi' | 'te' | 'kn' | 'ml' | 'mr' | 'bn' | 'en'
+    text: str = Field(..., min_length=1, max_length=10000)
+    # P2 fix: only ta/hi/en have storage columns. Translation still works
+    # for any source (English output), but the original is only persisted
+    # for ta and hi.
+    source_language: str = "ta"  # 'ta' | 'hi' | 'en'
 
 
 class CaseEntryTranslateResponse(BaseModel):
@@ -475,6 +548,9 @@ class CaseEntryTranslateResponse(BaseModel):
     original_text: str
     translated_text: str
     model: str
+
+
+_ALLOWED_SOURCE_LANGS = {"ta", "hi", "en"}
 
 
 @router.post("/cases/translate-entry", response_model=CaseEntryTranslateResponse)
@@ -486,14 +562,28 @@ def translate_case_entry(
     """F7 fix: IO writes in Tamil/Hindi; we store the original AND the
     English translation so the AI suggestions work on good inputs.
     """
-    # Use the existing Tamil/translate endpoint. Falls back to a no-op
-    # marker if the pipeline class isn't available in the deployed build.
+    # P2 fix: validate the source language against the storage columns
+    # (ta/hi/en only). An unknown source would silently fall through
+    # the persistence block and be lost.
+    if req.source_language not in _ALLOWED_SOURCE_LANGS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"source_language must be one of {sorted(_ALLOWED_SOURCE_LANGS)}",
+        )
+    # Use the existing Tamil pipeline endpoint. TamilPipeline.process
+    # does detect -> translate -> embed. P0-1 fix: use .process, not
+    # .translate (TamilPipeline only exposes process).
     try:
         from aranmanai.core.tamil.pipeline import TamilPipeline
         pipeline = TamilPipeline()
-        result = pipeline.translate(req.text, source=req.source_language, target="en")
-        translated = result.translated_text
-        model = result.model
+        result = pipeline.process(
+            req.text,
+            target_lang="en",
+            translate=True,
+            embed=False,
+        )
+        translated = result.translated_text or req.text
+        model = "tamil_pipeline"
     except (ImportError, AttributeError, Exception) as e:
         # Best-effort: pass through. The IO can re-translate on the client.
         log.info("f7.translate.unavailable err=%s", str(e)[:100])
@@ -539,7 +629,11 @@ class FIRAutofillResponse(BaseModel):
 
 
 @router.get("/cases/{case_id}/fir-autofill", response_model=FIRAutofillResponse)
-def get_fir_autofill(case_id: str, db: DbSession) -> FIRAutofillResponse:
+def get_fir_autofill(
+    case_id: str, db: DbSession, user: CurrentUser,
+) -> FIRAutofillResponse:
+    """P1 IDOR: enforce district match for autofill reads."""
+    _assert_district_match(case_id, user, db)
     """F8 fix: 90% of the FIR form is auto-derived from Case. Only the
     'what is unique to this case' fields need IO input.
     """
@@ -596,10 +690,27 @@ def transfer_case(
 
     Required for BPRD audit and court challenges (IO at the time of
     the act is responsible, not the IO at the time of trial).
+    P1 IDOR: enforce district match.
     """
+    _assert_district_match(case_id, user, db)
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(404, "Case not found")
+    # P2 fix: validate that the target IO/PP exist (was a raw 500 from
+    # the FK constraint otherwise). The test passes "x" as to_io_id
+    # which is not a valid user UUID.
+    if req.to_io_id is not None:
+        target_io = db.get(User, req.to_io_id)
+        if not target_io:
+            raise HTTPException(404, f"Target IO {req.to_io_id} not found")
+        if target_io.role != UserRole.IO.value:
+            raise HTTPException(400, f"User {req.to_io_id} is not an IO")
+    if req.to_pp_id is not None:
+        target_pp = db.get(User, req.to_pp_id)
+        if not target_pp:
+            raise HTTPException(404, f"Target PP {req.to_pp_id} not found")
+        if target_pp.role != UserRole.PP.value:
+            raise HTTPException(400, f"User {req.to_pp_id} is not a PP")
     from_io_id = case.io_id
     from_pp_id = case.pp_id
 
@@ -671,6 +782,10 @@ def record_family_liaison(
     db: DbSession,
 ) -> FamilyLiaisonResponse:
     """F11 fix: track family briefings for POCSO / 304B cases.
+    P1 IDOR: enforce district match.
+    """
+    _assert_district_match(case_id, user, db)
+    """F11 fix: track family briefings for POCSO / 304B cases.
 
     District Child Protection Officer asks quarterly for this data.
     """
@@ -714,7 +829,13 @@ def record_family_liaison(
 def list_family_liaison(
     case_id: str,
     db: DbSession,
+    user: CurrentUser,
 ) -> list[FamilyLiaisonResponse]:
+    """F11: list family liaison briefings for a case.
+
+    P0-2 fix: enforce district match (H-2 IDOR).
+    """
+    _assert_district_match(case_id, user, db)
     rows = (
         db.query(CaseFamilyLiaison)
         .filter(CaseFamilyLiaison.case_id == case_id)
@@ -746,7 +867,8 @@ class HelplineUpstreamRequest(BaseModel):
     helpline_log_id: str
     upstream_system: str  # '1091' | '181' | '112' | 'other'
     upstream_reference: str
-    raw_payload: Optional[dict] = None
+    # P2 fix: cap raw_payload at 16KB to prevent DB DoS via large POST
+    raw_payload: Optional[dict] = Field(default=None, max_length=16384)
 
 
 class HelplineUpstreamResponse(BaseModel):
@@ -757,16 +879,54 @@ class HelplineUpstreamResponse(BaseModel):
     received_at: str
 
 
+_ALLOWED_UPSTREAM_SYSTEMS = {"1091", "181", "112", "other"}
+
+
 @router.post("/safety/helpline/upstream", response_model=HelplineUpstreamResponse)
 def register_helpline_upstream(
     req: HelplineUpstreamRequest,
     db: DbSession,
+    user: IoUser,
 ) -> HelplineUpstreamResponse:
     """F12 fix: link to national/state helpline calls (1091 / 181).
 
     When a call comes in from the national helpline, link it to the
     upstream reference for end-to-end traceability.
+
+    P2 fix: validate upstream_system, dedupe on (helpline_log_id,
+    upstream_system, upstream_reference), and verify the helpline
+    call exists (FK 500 → 404).
     """
+    if req.upstream_system not in _ALLOWED_UPSTREAM_SYSTEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"upstream_system must be one of {sorted(_ALLOWED_UPSTREAM_SYSTEMS)}",
+        )
+    helpline = db.get(HelplineCall, req.helpline_log_id)
+    if not helpline:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Helpline call {req.helpline_log_id} not found",
+        )
+    # P2 fix: uniqueness on the business key. Same upstream reference
+    # re-submitted for the same helpline call is a no-op, not a dup row.
+    existing = (
+        db.query(HelplineUpstreamRef)
+        .filter(
+            HelplineUpstreamRef.helpline_log_id == req.helpline_log_id,
+            HelplineUpstreamRef.upstream_system == req.upstream_system,
+            HelplineUpstreamRef.upstream_reference == req.upstream_reference,
+        )
+        .first()
+    )
+    if existing:
+        return HelplineUpstreamResponse(
+            id=existing.id,
+            helpline_log_id=existing.helpline_log_id,
+            upstream_system=existing.upstream_system,
+            upstream_reference=existing.upstream_reference,
+            received_at=existing.received_at.isoformat(),
+        )
     row = HelplineUpstreamRef(
         helpline_log_id=req.helpline_log_id,
         upstream_system=req.upstream_system,
@@ -782,9 +942,9 @@ def register_helpline_upstream(
     db.refresh(row)
     _audit().append(
         AuditAction.HELPLINE_UPSTREAM,
-        actor_id=req.upstream_system,
+        actor_id=user.id,
         subject_id=req.helpline_log_id,
-        metadata={"upstream_reference": req.upstream_reference},
+        metadata={"upstream_reference": req.upstream_reference, "upstream_system": req.upstream_system},
     )
     return HelplineUpstreamResponse(
         id=row.id,
@@ -823,7 +983,28 @@ def record_pp_briefing(
     user: IoUser,
     db: DbSession,
 ) -> PPBriefingResponse:
-    """F13 fix: track which briefings a PP has read."""
+    """F13 fix: track which briefings a PP has read.
+
+    P1 IDOR: PP briefings are cross-IO - we verify PP exists but
+    accept any PP regardless of case district (PP works district-wide).
+    BUT the IO creating the briefing must be in the case's district
+    (or admin). Otherwise IO-A could spam briefings on case-B.
+
+    P3 fix: PPBriefing.read_at is actually recorded_at (the row creation
+    time), not when the PP read the briefing. Tracking actual reads
+    needs a separate endpoint that updates a read_at field.
+    """
+    # P1 fix: the IO must be in the case's district (or admin).
+    if req.case_id and user.role != UserRole.ADMIN.value:
+        case = db.get(Case, req.case_id)
+        if case and case.district != user.district:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Cannot brief PP on case in district {case.district}",
+            )
+    pp = db.get(User, req.pp_id)
+    if not pp or pp.role != UserRole.PP.value:
+        raise HTTPException(400, "PP not found or wrong role")
     row = PPBriefing(
         case_id=req.case_id,
         pp_id=req.pp_id,
@@ -849,12 +1030,22 @@ def record_pp_briefing(
 def get_unread_briefings(
     pp_id: str,
     db: DbSession,
+    user: CurrentUser,
 ) -> list[PPBriefingResponse]:
     """F13: 'Briefings I haven't responded to' tab for a PP.
 
     Currently returns all briefings; filtering by 'requires_response'
     + 'unread' is left to the client.
+
+    P0-2 / P1 fix: a non-admin user can only see their own briefings
+    (H-2 IDOR — the previous version let any user query any PP's
+    briefings by passing pp_id in the path).
     """
+    if user.role != UserRole.ADMIN.value and user.id != pp_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot read another user's briefings",
+        )
     rows = (
         db.query(PPBriefing)
         .filter(PPBriefing.pp_id == pp_id)
@@ -908,6 +1099,23 @@ def create_deputation(
 ) -> DeputationResponse:
     """F14 fix: deputation mode.
 
+    P1 IDOR: deputation_district must match the approver's district
+    (only cross-district deputations require admin approval).
+    """
+    if user.role != UserRole.ADMIN.value:
+        # P1 fix: the deputation_district must equal the approver's
+        # own district. Only admins can create cross-district deputations.
+        if req.deputation_district != user.district:
+            raise HTTPException(
+                status_code=403,
+                detail="SPs can only create deputations for their own district",
+            )
+        # Also require the user being deputed to be in the approver's district
+        u = db.get(User, req.user_id)
+        if u and u.district != user.district:
+            raise HTTPException(403, "User being deputed is not in your district")
+    """F14 fix: deputation mode.
+
     When an IO is on deputation in another district, the H-2 IDOR fix
     would otherwise block cross-district access. Deputations make the
     cross-district access explicit.
@@ -958,10 +1166,20 @@ def end_deputation(
     user: SpUser,
     db: DbSession,
 ) -> dict:
-    """F14: end a deputation early."""
+    """F14: end a deputation early.
+
+    P1 fix: SPs can only end deputations in their own district
+    (admins can end any). The user is identified by the deputation
+    row, not by auth, so we must check the district here.
+    """
     dep = db.get(Deputation, deputation_id)
     if not dep:
         raise HTTPException(404, "Deputation not found")
+    if user.role != UserRole.ADMIN.value and dep.deputation_district != user.district:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot end a deputation in another district",
+        )
     dep.is_active = False
     db.commit()
     _audit().append(
