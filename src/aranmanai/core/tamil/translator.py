@@ -76,8 +76,8 @@ class Translator:
         if model_name in Translator._PIPELINES:
             return Translator._PIPELINES[model_name]
         try:
-            import torch  # type: ignore
-            from transformers import MarianMTModel, MarianTokenizer  # type: ignore
+            import torch
+            from transformers import MarianMTModel, MarianTokenizer
         except ImportError as e:
             raise RuntimeError(
                 "transformers/torch not installed. Install: pip install transformers torch"
@@ -164,7 +164,12 @@ class Translator:
                 via="en",
             )
 
-        # Direct translation
+        # Direct translation. model_name is guaranteed non-None here: the
+        # only way to reach this point is either (a) model_name was resolved
+        # above, or (b) routed is True and we already returned above -- the
+        # `model_name is None and not routed` guard ruled out the remaining
+        # case.
+        assert model_name is not None
         pipe = self._get_pipeline(model_name)
         translated = pipe(text)
         return TranslationResult(

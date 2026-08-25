@@ -36,7 +36,10 @@ class WitnessPreparationService:
         # Decrypt statement for the prompt (server-side; never logged). The
         # witness's name is deliberately kept out of the LLM prompt/logs.
         from aranmanai.security import decrypt_field
-        statement = decrypt_field(witness.statement_text_encrypted) or "(no 161 statement on file)"
+        statement = (
+            decrypt_field(witness.statement_text_encrypted or "")
+            or "(no 161 statement on file)"
+        )
 
         response = self.ai_service.prepare(
             CrossExamPrepRequest(

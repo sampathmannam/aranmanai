@@ -72,7 +72,7 @@ class OllamaLLMClient(LLMClient):
         content = data.get("message", {}).get("content", "")
         return LLMResponse(
             content=content,
-            model=self._model_name,
+            model=self.model_name,
             prompt_tokens=data.get("prompt_eval_count", 0),
             completion_tokens=data.get("eval_count", 0),
             total_tokens=(data.get("prompt_eval_count", 0) + data.get("eval_count", 0)),

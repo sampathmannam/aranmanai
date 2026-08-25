@@ -189,10 +189,7 @@ async def pipeline(
             duration_s=r.duration_s,
             num_segments=r.num_segments,
             audio_sha256=r.audio_sha256,
-            segments=[
-                {"start": s.start, "end": s.end, "text": s.text, "no_speech_prob": s.no_speech_prob}
-                for s in [seg for seg in r.per_segment for _ in range(1)]
-            ] if False else [  # flat list of per-segment dicts
+            segments=[  # flat list of per-segment dicts
                 {"start": ps.segments[0]["start"] if ps.segments else 0,
                  "end": ps.segments[0]["end"] if ps.segments else 0,
                  "text": ps.text}

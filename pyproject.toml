@@ -41,6 +41,7 @@ dependencies = [
     "pytest-mock==3.14.0",
     "ruff==0.7.2",
     "mypy==1.13.0",
+    "types-requests==2.33.0.20260712",
     "structlog==24.4.0",
     "llama-cpp-python==0.3.2",
     "streamlit==1.40.0",

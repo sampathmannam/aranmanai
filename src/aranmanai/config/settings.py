@@ -150,7 +150,7 @@ class Settings(BaseSettings):
 
     # ── Voice (STT / TTS) ──
     whisper_model: str = Field(default="small", description="tiny|base|small|medium")
-    whisper_device: str = "cpu"  # CPU is fine for Whisper small on Ryzen
+    whisper_device: Literal["cpu", "cuda", "auto"] = "cpu"  # CPU is fine for Whisper small on Ryzen
     vad_threshold: float = 0.5
     max_audio_size_mb: int = 50
 

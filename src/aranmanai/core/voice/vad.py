@@ -11,10 +11,14 @@ from __future__ import annotations
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from aranmanai.observability import get_logger
+
+if TYPE_CHECKING:
+    import torch
 
 log = get_logger(__name__)
 
@@ -56,7 +60,7 @@ class VoiceActivityDetector:
         if self._loaded:
             return
         try:
-            from silero_vad import load_silero_vad  # type: ignore
+            from silero_vad import load_silero_vad
         except ImportError as e:
             raise RuntimeError(
                 "silero-vad not installed. Install voice extras: pip install silero-vad==5.1"
@@ -66,9 +70,9 @@ class VoiceActivityDetector:
         log.info("vad.loaded threshold=%s", self.threshold)
 
     @staticmethod
-    def _to_torch(audio: np.ndarray) -> torch.Tensor:  # noqa: F821 -- `torch` is optional/lazy-imported below; safe because `from __future__ import annotations` (line 9) defers this annotation to a string, never evaluated at runtime
+    def _to_torch(audio: np.ndarray) -> torch.Tensor:
         """Convert numpy float32 audio to a torch tensor (silero-vad requirement)."""
-        import torch  # type: ignore
+        import torch
         return torch.from_numpy(audio.astype(np.float32, copy=False))
 
     def detect(

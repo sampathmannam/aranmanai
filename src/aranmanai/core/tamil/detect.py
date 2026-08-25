@@ -14,9 +14,18 @@ Usage:
 """
 from __future__ import annotations
 
+from typing import Any
+
 from aranmanai.observability import get_logger
 
 log = get_logger(__name__)
+
+# Cached fasttext lid.176 model (lazy-loaded on first call to
+# detect_language). None = not attempted yet; False = attempted but
+# unavailable (no model file / fasttext not installed); anything else =
+# the loaded fasttext model. Typed Any because fasttext ships no type
+# stubs and is an optional dependency not installed in every environment.
+_ft_model: Any = None
 
 # ISO 639-1 -> human-readable name
 LANGUAGE_NAMES = {
@@ -56,7 +65,7 @@ def detect_script(text: str) -> str:
     """Detect the dominant Unicode script of a text. Returns script name or 'Latin'."""
     if not text:
         return "Latin"
-    counts = {}
+    counts: dict[str, int] = {}
     for ch in text:
         if not ch.isalpha():
             continue
@@ -88,21 +97,23 @@ def detect_language(
     if not text or not text.strip():
         return ("en", 0.0)
 
+    global _ft_model
+
     # Try fasttext
     try:
-        import fasttext  # type: ignore
+        import fasttext
     except ImportError:
-        fasttext = None  # type: ignore
+        fasttext = None
 
     if fasttext is not None:
         try:
-            if not hasattr(detect_language, "_ft_model") or detect_language._ft_model is None:
+            if _ft_model is None:
                 # Lazy load. If model file not present, set to a sentinel
                 if fasttext_model_path and __import__("os").path.exists(fasttext_model_path):
-                    detect_language._ft_model = fasttext.load_model(fasttext_model_path)
+                    _ft_model = fasttext.load_model(fasttext_model_path)
                 else:
-                    detect_language._ft_model = False  # sentinel: not loaded
-            model = detect_language._ft_model
+                    _ft_model = False  # sentinel: not loaded
+            model = _ft_model
             if model and model is not False:
                 # fasttext expects newline-separated input
                 labels, probs = model.predict(text.replace("\n", " "))

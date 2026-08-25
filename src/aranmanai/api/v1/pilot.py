@@ -124,7 +124,11 @@ def mid_review(pilot_case_id: str, req: PilotMidReviewRequest, user: SpUser, db:
         )
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
-    return {"status": "ok", "pilot_case_id": pc.id, "mid_review_at": pc.mid_review_at.isoformat()}
+    return {
+        "status": "ok",
+        "pilot_case_id": pc.id,
+        "mid_review_at": pc.mid_review_at.isoformat() if pc.mid_review_at else None,
+    }
 
 
 @router.post("/{pilot_case_id}/close")

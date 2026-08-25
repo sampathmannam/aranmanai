@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
@@ -46,7 +47,7 @@ class VoicePipeline:
         self,
         stt_model_size: str | None = None,
         vad_threshold: float = 0.5,
-        device: str | None = None,
+        device: Literal["cpu", "cuda", "auto"] | None = None,
     ):
         self.stt = SpeechToText(model_size=stt_model_size, device=device)
         self.vad = VoiceActivityDetector(threshold=vad_threshold)

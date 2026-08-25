@@ -34,7 +34,7 @@ class TextToSpeech:
     def _ensure_engine(self):
         if self._engine is None:
             try:
-                import pyttsx3  # type: ignore
+                import pyttsx3
             except ImportError as e:
                 raise RuntimeError(
                     "pyttsx3 not installed. Install: pip install pyttsx3==2.90"

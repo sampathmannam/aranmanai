@@ -12,12 +12,15 @@ import io
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import numpy as np
 
 from aranmanai.config import get_settings
 from aranmanai.observability import get_logger
+
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel
 
 log = get_logger(__name__)
 
@@ -71,7 +74,7 @@ class SpeechToText:
         print(result.text)
     """
 
-    _MODELS: ClassVar[dict[str, object]] = {}  # shared cache
+    _MODELS: ClassVar[dict[str, WhisperModel]] = {}  # shared cache
 
     def __init__(
         self,
@@ -94,7 +97,7 @@ class SpeechToText:
             self._loaded = True
             return
         try:
-            from faster_whisper import WhisperModel  # type: ignore
+            from faster_whisper import WhisperModel
         except ImportError as e:
             raise RuntimeError(
                 "faster-whisper not installed. Install voice extras: "

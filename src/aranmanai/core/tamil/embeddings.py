@@ -64,7 +64,7 @@ class TextEmbedder:
             self._loaded = True
             return
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore
+            from sentence_transformers import SentenceTransformer
         except ImportError as e:
             raise RuntimeError(
                 "sentence-transformers not installed. Install: "
