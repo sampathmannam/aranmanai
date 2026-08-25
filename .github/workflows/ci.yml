@@ -33,8 +33,70 @@ jobs:
       - name: Type check
         run: .\venv\Scripts\python.exe -m mypy src/ --ignore-missing-imports
 
+      - name: Seed DB for live-server tests
+        env:
+          ARANMANAI_LLM_BACKEND: mock
+          # Fixed, non-production, CI-only dev-grade values — just satisfying
+          # Settings' required-field validators (db_key / jwt_secret) in a
+          # throwaway CI environment. Not real secrets.
+          ARANMANAI_DB_KEY: "ci-only-dev-key-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ARANMANAI_JWT_SECRET: "ci-only-dev-jwt-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ARANMANAI_CORS_ORIGINS: '["http://localhost:8501"]'
+        run: |
+          .\venv\Scripts\python.exe scripts\init_db.py
+          .\venv\Scripts\python.exe scripts\seed_pilot_data.py
+
+      - name: Start API server
+        env:
+          ARANMANAI_LLM_BACKEND: mock
+          ARANMANAI_DB_KEY: "ci-only-dev-key-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ARANMANAI_JWT_SECRET: "ci-only-dev-jwt-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ARANMANAI_CORS_ORIGINS: '["http://localhost:8501"]'
+        run: |
+          $proc = Start-Process -FilePath ".\venv\Scripts\python.exe" `
+            -ArgumentList "scripts\run_api.py" `
+            -PassThru -RedirectStandardOutput "api-server.out.log" -RedirectStandardError "api-server.err.log"
+          Write-Host "Started API server, PID=$($proc.Id)"
+          "API_SERVER_PID=$($proc.Id)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $ready = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $resp = Invoke-WebRequest -Uri "http://127.0.0.1:8080/docs" -UseBasicParsing -TimeoutSec 2
+              if ($resp.StatusCode -eq 200) {
+                Write-Host "API server ready after $i s"
+                $ready = $true
+                break
+              }
+            } catch {
+              Start-Sleep -Seconds 1
+            }
+          }
+          if (-not $ready) {
+            Write-Host "=== api-server.out.log ==="
+            Get-Content "api-server.out.log" -ErrorAction SilentlyContinue
+            Write-Host "=== api-server.err.log ==="
+            Get-Content "api-server.err.log" -ErrorAction SilentlyContinue
+            throw "API server did not become ready within 30s"
+          }
+
       - name: Test
         env:
           ARANMANAI_LLM_BACKEND: mock
+          ARANMANAI_DB_KEY: "ci-only-dev-key-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ARANMANAI_JWT_SECRET: "ci-only-dev-jwt-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ARANMANAI_CORS_ORIGINS: '["http://localhost:8501"]'
         run: |
           .\venv\Scripts\python.exe -m pytest tests/ -v --tb=short --cov=aranmanai --cov-report=term-missing
+
+      - name: Stop API server
+        if: always()
+        run: |
+          if ($env:API_SERVER_PID) {
+            Write-Host "Stopping API server, PID=$($env:API_SERVER_PID)"
+            Stop-Process -Id $env:API_SERVER_PID -Force -ErrorAction SilentlyContinue
+          }
+          Write-Host "=== api-server.out.log (tail) ==="
+          Get-Content "api-server.out.log" -Tail 100 -ErrorAction SilentlyContinue
+          Write-Host "=== api-server.err.log (tail) ==="
+          Get-Content "api-server.err.log" -Tail 100 -ErrorAction SilentlyContinue
