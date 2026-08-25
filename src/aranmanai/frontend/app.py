@@ -519,10 +519,6 @@ def render_cmc_morning() -> None:
 # ──────────────────────────────────────────────────────────────
 # AI Assist — W-1, W-2, S-5, F-3, F-5
 # ──────────────────────────────────────────────────────────────
-def _ai_loading_key(api_name: str) -> str:
-    return f"_ai_loading_{api_name}"
-
-
 def render_ai_assist() -> None:
     _breadcrumb("AI Assist")
     token = _require_auth()

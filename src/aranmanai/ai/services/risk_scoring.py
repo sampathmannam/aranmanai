@@ -21,7 +21,7 @@ VALID_FSL_STATUS = ("not_sent", "in_queue", "returned", "overdue", "sent")
 
 
 class RiskScoreRequest(BaseModel):
-    case_id: str = Field(..., min_length=1)
+    case_id: str = Field(..., min_length=1, max_length=36)
     case_facts: str = Field(..., min_length=1)
     lapses: list[dict] = Field(default_factory=list)
     evidence_strength: Literal["STRONG", "MEDIUM", "WEAK"] = "MEDIUM"
