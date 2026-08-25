@@ -793,19 +793,18 @@ def record_family_liaison(
     pollute the report with non-POCSO/304B briefings, eroding DCPO
     trust in the system.
 
-    Admins bypass the check (for data correction / migration).
+    Even admins cannot create a family liaison briefing on a
+    non-POCSO/304B case — the DCPO report trusts this filter to
+    mean "every row is a POCSO or 304B briefing". If a correction
+    is genuinely needed, set the case's `is_pocso_or_304b_case`
+    flag first via the case-update endpoint, then re-record the
+    briefing.
     """
     _assert_district_match(case_id, user, db)
     case = db.get(Case, case_id)
     if not case:
         raise HTTPException(404, "Case not found")
     if not case.is_pocso_or_304b_case:
-        # Even admins cannot create a family liaison briefing on a
-        # non-POCSO/304B case — the DCPO report trusts this filter
-        # to mean "every row is a POCSO or 304B briefing". If a
-        # correction is genuinely needed, set the case's
-        # `is_pocso_or_304b_case` flag first via the case-update
-        # endpoint, then re-record the briefing.
         raise HTTPException(
             status_code=400,
             detail=(

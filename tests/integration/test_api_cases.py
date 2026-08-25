@@ -14,13 +14,15 @@ def test_create_and_get_case(client):
     assert r.status_code == 201, r.text
     data = r.json()
     case_id = data["id"]
-    assert data["fir_no"] == "INT-001/2026"
+    # Kishore review item 5: FIR-number normalizer canonicalizes dashes to
+    # "/" and strips leading zeros, so "INT-001/2026" -> "INT/1/2026".
+    assert data["fir_no"] == "INT/1/2026"
     assert data["status"] == "open"
     assert data["stage"] == "investigation"
 
     r2 = client.get(f"/api/v1/cases/{case_id}")
     assert r2.status_code == 200
-    assert r2.json()["fir_no"] == "INT-001/2026"
+    assert r2.json()["fir_no"] == "INT/1/2026"
 
 
 def test_list_cases_filtered_by_district(client):

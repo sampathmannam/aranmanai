@@ -1,6 +1,7 @@
 """Case routes: CRUD + listing + status transitions."""
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -15,6 +16,47 @@ from aranmanai.db.models.case import Case, CaseStage, CaseStatus
 from aranmanai.observability import get_logger
 from aranmanai.security import AuditAction, AuditLog, encrypt_field
 from aranmanai.config import get_settings
+
+
+# v1.1 Kishore review item 5: FIR-number normalizer.
+# Defends the UNIQUE(fir_no, district) constraint from typo-collision:
+#   "123/2025" vs "123-2025" vs " 123 2025 " all canonicalize to "123/2025".
+# Canonical form: trim, collapse internal whitespace, replace dashes /
+# dots with "/", strip leading zeros on the numeric part.
+# The result is what is stored and what is searched.
+_FIR_STRIP_RE = re.compile(r"[\s\-.]+")
+_FIR_KEEP = "/"
+
+
+def _normalize_fir_no(fir_no: str) -> str:
+    """Canonicalize a FIR number for storage and search.
+
+    Examples (all collapse to the same canonical form):
+      "123/2025"   -> "123/2025"
+      "123-2025"   -> "123/2025"
+      " 123 2025 " -> "123/2025"
+      "123 . 2025" -> "123/2025"
+      "0123/2025"  -> "123/2025"   (leading zero stripped on the number)
+
+    The result is at most 64 chars (FIR-no column max). The endpoint
+    still validates the input shape (min 1, max 64) before this is
+    called.
+    """
+    s = (fir_no or "").strip()
+    if not s:
+        return s
+    s = _FIR_STRIP_RE.sub(_FIR_KEEP, s)
+    # Strip leading zeros on any numeric segment, but keep a single
+    # "0" if the segment was all zeros ("000/2025" -> "0/2025", not "/2025").
+    parts = s.split(_FIR_KEEP)
+    out = []
+    for part in parts:
+        if part.isdigit():
+            stripped = part.lstrip("0")
+            out.append(stripped or "0")
+        else:
+            out.append(part)
+    return _FIR_KEEP.join(out)
 
 log = get_logger(__name__)
 router = APIRouter()
@@ -37,6 +79,11 @@ class CaseCreateRequest(BaseModel):
     io_id: str | None = None
     pp_id: str | None = None
     sp_id: str | None = None
+    # v1.1 Kishore review item 2/3: the IO sets the POCSO/304B
+    # flag at FIR-filing time (it's the IO's judgment, not derived
+    # from BNS section codes). Default False. Required for F11
+    # family-liaison briefings to be recorded.
+    is_pocso_or_304b_case: bool = False
 
 
 class CaseUpdateRequest(BaseModel):
@@ -53,6 +100,9 @@ class CaseUpdateRequest(BaseModel):
     sp_id: str | None = None
     next_hearing: datetime | None = None
     sp_notes: str | None = None
+    # v1.1 Kishore review item 3: the IO can flip this on later
+    # (e.g., the case is reclassified after the initial FIR).
+    is_pocso_or_304b_case: bool | None = None
 
 
 class CaseResponse(BaseModel):
@@ -110,9 +160,21 @@ def _to_response(c: Case) -> dict[str, Any]:
 
 @router.post("", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
 def create_case(req: CaseCreateRequest, db: DbSession, user: IoUser) -> CaseResponse:
+    # v1.1 Kishore review item 5: normalize the FIR number so
+    # "123/2025" / "123-2025" / " 123 2025 " collapse to the same
+    # canonical form. Defends the UNIQUE(fir_no, district) constraint
+    # from typo-collision. The original is preserved in the audit log
+    # metadata so a court challenge can still see what the IO typed.
+    raw_fir = req.fir_no
+    fir_no = _normalize_fir_no(raw_fir)
+    if not fir_no:
+        raise HTTPException(
+            status_code=400,
+            detail="fir_no is empty after normalization (e.g. all whitespace)",
+        )
     case = Case(
         id=str(uuid.uuid4()),
-        fir_no=req.fir_no,
+        fir_no=fir_no,
         district=req.district,
         court=req.court,
         judge=req.judge,
@@ -124,6 +186,11 @@ def create_case(req: CaseCreateRequest, db: DbSession, user: IoUser) -> CaseResp
         io_id=req.io_id or user.id,
         pp_id=req.pp_id,
         sp_id=req.sp_id or (user.id if user.role.value == "sp" else None),
+        # v1.1 Kishore review item 3: the IO sets the POCSO/304B
+        # flag at FIR-filing time. Without this, the F11 endpoint
+        # rejects the family liaison and the IO has no production
+        # path to set the flag.
+        is_pocso_or_304b_case=req.is_pocso_or_304b_case,
     )
     db.add(case)
     db.commit()
@@ -134,9 +201,13 @@ def create_case(req: CaseCreateRequest, db: DbSession, user: IoUser) -> CaseResp
         subject_id=case.id,
         fields_used=["fir_no", "district", "bns_sections", "facts_text"],
         success=True,
-        metadata={"fir_no": case.fir_no},
+        metadata={
+            "fir_no": fir_no,
+            "fir_no_raw": raw_fir,
+            "is_pocso_or_304b_case": req.is_pocso_or_304b_case,
+        },
     )
-    log.info("case.create", case_id=case.id[:8], fir_no=case.fir_no)
+    log.info("case.create", case_id=case.id[:8], fir_no=fir_no)
     return _to_response(case)
 
 
