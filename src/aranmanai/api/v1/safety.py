@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from aranmanai.api.deps import CurrentUser, DbSession, SpUser, WomenPatrolUser
+from aranmanai.api.deps import CurrentUser, DbSession, IoUser, SpUser, WomenPatrolUser
 from aranmanai.db.models.safety import (
     AnonymousReport as AnonymousReportRow,
     HelplineCall as HelplineCallRow,
@@ -42,23 +42,46 @@ router = APIRouter(prefix="/safety", tags=["citizen-safety"])
 # coverage is enough for the demo / pilot deployment.
 _rate_state: dict[tuple[str, str], list[float]] = defaultdict(list)
 _rate_lock = Lock()
-_RATE_LIMIT_PER_MIN = 10
+# P1 fix: per-route rate limits. Helpline + report get the strict
+# default; patrol dispatch needs to be able to send multiple units in
+# one minute during an active incident, so it gets a higher limit.
+_RATE_LIMITS: dict = {
+    "/helpline/call": 10,
+    "/report": 10,
+    "/patrol/dispatch": 60,
+}
 _RATE_WINDOW_SEC = 60
+_BUCKET_TTL_SEC = 3600  # P1 fix: drop bucket keys after 1h idle
+_last_cleanup = 0.0
+
+
+def _cleanup_rate_state() -> None:
+    """P1 fix: bound the in-process dict by dropping idle keys."""
+    global _last_cleanup
+    now = time.monotonic()
+    if now - _last_cleanup < 300:  # cleanup every 5 min
+        return
+    _last_cleanup = now
+    cutoff = now - _BUCKET_TTL_SEC
+    stale = [k for k, v in _rate_state.items() if not v or v[-1] < cutoff]
+    for k in stale:
+        _rate_state.pop(k, None)
 
 
 def _check_rate(ip: str, route: str) -> None:
-    """Raise 429 if ip+route exceeds the per-minute rate."""
+    """Raise 429 if ip+route exceeds the per-route rate."""
     now = time.monotonic()
+    _cleanup_rate_state()
     with _rate_lock:
         key = (ip, route)
         bucket = _rate_state[key]
         # drop entries older than the window
         bucket[:] = [t for t in bucket if now - t < _RATE_WINDOW_SEC]
-        if len(bucket) >= _RATE_LIMIT_PER_MIN:
+        limit = _RATE_LIMITS.get(route, 10)
+        if len(bucket) >= limit:
             raise HTTPException(
                 status_code=429,
-                detail=f"Rate limit exceeded for {route} (max "
-                f"{_RATE_LIMIT_PER_MIN}/min)",
+                detail=f"Rate limit exceeded for {route} (max {limit}/min)",
             )
         bucket.append(now)
 
@@ -149,8 +172,11 @@ def get_helpline() -> dict:
 
 
 @router.post("/helpline/call", response_model=HelplineCallResponse, status_code=201)
-def log_helpline_call(req: HelplineCallLog, user: WomenPatrolUser, db: DbSession, request: Request) -> HelplineCallResponse:
+def log_helpline_call(req: HelplineCallLog, user: IoUser, db: DbSession, request: Request) -> HelplineCallResponse:
     """Log a helpline call. NO PII is stored - only metadata.
+
+    P1 fix: allow IO + WomenPatrol + SP. Helpline desk staff includes IOs.
+
 
     C-5 fix: now persists to DB.
     H-3 fix: rate-limited per client IP.
@@ -238,13 +264,46 @@ def dispatch_patrol(req: PatrolDispatchRequest, user: SpUser, db: DbSession, req
 
     C-5 fix: now persists to DB.
     H-3 fix: rate-limited per client IP (still per minute).
+    P1 fix: deterministic unit selection (alphabetical by id) and
+    district match enforcement (SPs can only dispatch in their
+    own district unless admin).
+    P2 fix: deterministic unit pick — order by id so two dispatches
+    in the same minute don't race to the same unit.
     """
     _check_rate(_client_ip(request), "/patrol/dispatch")
+    if user.role != UserRole.ADMIN.value and req.district != user.district:
+        raise HTTPException(
+            status_code=403,
+            detail="SPs can only dispatch in their own district",
+        )
     dispatch_id = str(uuid.uuid4())
-    # Find a women patrol unit in the district
+    # P2 fix: pick the unit with the fewest open dispatches (load-balanced),
+    # tiebreak by id (deterministic). Subquery counts open dispatches per unit.
+    from sqlalchemy import func
+    open_count_subq = (
+        db.query(
+            PatrolDispatchRow.unit_id,
+            func.count(PatrolDispatchRow.id).label("open_count"),
+        )
+        .filter(PatrolDispatchRow.unit_id.isnot(None))
+        .group_by(PatrolDispatchRow.unit_id)
+        .subquery()
+    )
     unit = (
         db.query(User)
-        .filter(User.role == UserRole.WOMEN_PATROL, User.district == req.district, User.is_active)
+        .outerjoin(
+            open_count_subq,
+            User.id == open_count_subq.c.unit_id,
+        )
+        .filter(
+            User.role == UserRole.WOMEN_PATROL,
+            User.district == req.district,
+            User.is_active,
+        )
+        .order_by(
+            func.coalesce(open_count_subq.c.open_count, 0).asc(),
+            User.id.asc(),
+        )
         .first()
     )
     unit_id = unit.id if unit else None
@@ -283,11 +342,18 @@ def list_patrol_dispatches(user: SpUser, db: DbSession, district: Optional[str] 
     """List patrol dispatches for the district. SP view.
 
     C-5 fix: now reads from DB.
+    P1 fix (H-2 IDOR): a non-admin SP can only list their own district.
+    Passing district=other-district was a cross-district read.
     """
     from datetime import datetime as _dt
     from sqlalchemy import desc
 
     target = district or user.district
+    if user.role != UserRole.ADMIN.value and target != user.district:
+        raise HTTPException(
+            status_code=403,
+            detail="SPs can only list their own district",
+        )
     q = db.query(PatrolDispatchRow).filter(PatrolDispatchRow.district == target)
     rows = q.order_by(desc(PatrolDispatchRow.dispatched_at)).limit(50).all()
     return {
@@ -309,3 +375,4 @@ def list_patrol_dispatches(user: SpUser, db: DbSession, district: Optional[str] 
             for r in rows
         ],
     }
+
