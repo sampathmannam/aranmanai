@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from aranmanai.ai.llm_client import LLMMessage
+from aranmanai.ai.prompts._sanitize import delimit, sanitize_for_llm
 
 
 def build_chargesheet_prompt(
@@ -18,7 +19,16 @@ def build_chargesheet_prompt(
     io_name: str,
     language: str = "en",
 ) -> list[LLMMessage]:
-    """Build messages for a chargesheet drafting request (BNSS §173)."""
+    """Build messages for a chargesheet drafting request (BNSS §173).
+
+    H-1 fix: all caller-supplied text fields (case metadata, accused
+    details, facts, evidence/witness summaries) are sanitized before
+    being interpolated into the prompt, so a malicious IO/PP-entered
+    string cannot inject instructions into the LLM. The large free-text
+    fields (facts, evidence/witness summaries) are additionally wrapped
+    in <<<>>> delimiters; short single-line metadata fields are
+    sanitized in place to preserve the "Key: Value" prompt structure.
+    """
     system = f"""You are an experienced Indian Police IO drafting a final
 charge sheet (कुटुम्ब न्यायालय) under Section 173 of the Bharatiya
 Nagarik Suraksha Sanhita (BNSS) 2023, which replaced CrPC §173.
@@ -38,32 +48,34 @@ Rules:
 
 Output language: {language}"""
 
+    safe_sections_bns = [sanitize_for_llm(s, 200) for s in (sections_bns or [])]
+
     user = f"""Draft a charge sheet (final report under Section 173 BNSS).
 
 CASE METADATA:
-Case ID (Aranmanai): {case_id}
-FIR No.: {fir_no}
-Court where chargesheet will be filed: {court}
+Case ID (Aranmanai): {sanitize_for_llm(case_id, 500)}
+FIR No.: {sanitize_for_llm(fir_no, 500)}
+Court where chargesheet will be filed: {sanitize_for_llm(court, 500)}
 
 ACCUSED:
-Name: {accused_name}
-Address: {accused_address}
-Arrest date: {arrest_date}
+Name: {sanitize_for_llm(accused_name, 500)}
+Address: {sanitize_for_llm(accused_address, 500)}
+Arrest date: {sanitize_for_llm(arrest_date, 500)}
 
 OFFENCES (BNS sections):
-{', '.join(sections_bns)}
+{', '.join(safe_sections_bns)}
 
 FACTS OF THE CASE (from case diary):
-{facts}
+{delimit(facts, "FACTS")}
 
 EVIDENCE SUMMARY (from case file, including chain of custody):
-{evidence_summary}
+{delimit(evidence_summary, "EVIDENCE_SUMMARY")}
 
 WITNESS SUMMARY (with 161 BNSS references):
-{witness_summary}
+{delimit(witness_summary, "WITNESS_SUMMARY")}
 
 INVESTIGATION OFFICER (IO to verify and sign):
-{io_name}
+{sanitize_for_llm(io_name, 500)}
 
 Produce the charge sheet now."""
 

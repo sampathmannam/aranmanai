@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from aranmanai.ai.llm_client import LLMMessage
+from aranmanai.ai.prompts._sanitize import delimit, sanitize_for_llm
 
 
 def build_case_diary_prompt(
@@ -13,7 +14,13 @@ def build_case_diary_prompt(
     investigation_steps: str,
     language: str = "en",
 ) -> list[LLMMessage]:
-    """Build messages for a case diary entry draft."""
+    """Build messages for a case diary entry draft.
+
+    H-1 fix: caller-supplied text (case/IO metadata, progress notes,
+    investigation steps) is sanitized and delimited before being
+    interpolated into the prompt, so a malicious IO-entered string
+    cannot inject instructions into the LLM.
+    """
     system = f"""You are an experienced IO drafting a case diary entry under
 Section 174 of the Bharatiya Nagarik Suraksha Sanhita (BNSS) 2023 (which
 renumbered CrPC §172). The case diary is the IO's chronological record
@@ -32,15 +39,15 @@ Output language: {language}"""
 
     user = f"""Draft a case diary entry.
 
-CASE: {case_id} (FIR {fir_no})
-DATE OF ENTRY: {date}
-IO: {io_name}
+CASE: {sanitize_for_llm(case_id, 500)} (FIR {sanitize_for_llm(fir_no, 500)})
+DATE OF ENTRY: {sanitize_for_llm(date, 500)}
+IO: {sanitize_for_llm(io_name, 500)}
 
 PROGRESS NOTES FROM IO:
-{progress_notes}
+{delimit(progress_notes, "PROGRESS_NOTES")}
 
 INVESTIGATION STEPS TAKEN TODAY:
-{investigation_steps}
+{delimit(investigation_steps, "INVESTIGATION_STEPS")}
 
 Produce the case diary entry now."""
 
