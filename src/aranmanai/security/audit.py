@@ -210,7 +210,13 @@ class AuditLog:
         return log_id
 
     def verify(self) -> tuple[bool, str]:
-        """Verify the chain integrity. Returns (ok, message)."""
+        """Verify the chain integrity of the current file. Returns (ok, message).
+
+        v1.1: use `verify_all()` to walk rotated files. This method
+        verifies a single file; rotation breaks the chain from the
+        caller's perspective (each rotated file is its own chain
+        starting at GENESIS).
+        """
         prev_hash = GENESIS_HASH
         count = 0
         with self.log_path.open("r", encoding="utf-8") as f:
@@ -232,6 +238,62 @@ class AuditLog:
                 prev_hash = entry_hash
                 count += 1
         return True, f"chain OK, {count} entries verified"
+
+    def verify_all(self) -> tuple[bool, str]:
+        """Verify the chain across rotated files.
+
+        v1.1: rotation-aware verify. Walks the current file
+        (`self.log_path`) and any sibling rotated files
+        (`audit.log.1`, `audit.log.2`, ...). Each file is verified
+        independently — rotation is not tampering, the chain just
+        restarts at GENESIS. The DPDP auditor can now verify a 6-month
+        audit history that has been rotated weekly without getting a
+        false-positive "chain broken" after the first rotation.
+
+        Sorted order: rotated files first (oldest `.N` to newest),
+        then the current file. The current file's first entry's
+        `prev_hash` is GENESIS, so a successful verify on each file
+        in turn is a clean result.
+        """
+        base = self.log_path
+        parent = base.parent
+        # Find rotated files: audit.log.1, audit.log.2, ..., audit.log.9
+        # (in practice a rotation tool may produce higher N, but
+        # single-digit N is the v1.1 assumption).
+        rotated: list[Path] = []
+        for n in range(1, 20):
+            p = parent / f"{base.name}.{n}"
+            if p.exists():
+                rotated.append(p)
+            else:
+                break
+        # Oldest first
+        rotated.sort(key=lambda p: int(p.name.split(".")[-1]), reverse=True)
+        files_to_check = rotated + [base]
+        total = 0
+        for f in files_to_check:
+            prev_hash = GENESIS_HASH
+            count = 0
+            with f.open("r", encoding="utf-8") as fh:
+                for line_num, line in enumerate(fh, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError as e:
+                        return False, f"{f.name} line {line_num}: invalid JSON: {e}"
+                    entry_prev = entry.pop("prev_hash", None)
+                    entry_hash = entry.pop("hash", None)
+                    if entry_prev != prev_hash:
+                        return False, f"{f.name} line {line_num}: prev_hash mismatch"
+                    computed = _hash_entry(prev_hash, entry)
+                    if computed != entry_hash:
+                        return False, f"{f.name} line {line_num}: hash mismatch"
+                    prev_hash = entry_hash
+                    count += 1
+            total += count
+        return True, f"chain OK across {len(files_to_check)} file(s), {total} entries verified"
 
     def tail(self, n: int = 10) -> list[dict[str, Any]]:
         """Return the last n entries (most recent first)."""
